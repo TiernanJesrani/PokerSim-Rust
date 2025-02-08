@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::models;
+    use crate::models::deck_model;
 
     #[test]
     fn test_shuffle() -> () {
-        let mut deck = models::Deck::new();
+        let mut deck = deck_model::Deck::new();
 
-        let mut deck_shuffle = models::Deck::new();
+        let mut deck_shuffle = deck_model::Deck::new();
 
         deck_shuffle.shuffle();
 
@@ -15,7 +15,7 @@ mod tests {
 
     #[test]
     fn test_top() -> () {
-        let mut deck = models::Deck::new();
+        let mut deck = deck_model::Deck::new();
 
         deck.top_card();
 
@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_remove() -> () {
-        let mut deck = models::Deck::new();
+        let mut deck = deck_model::Deck::new();
 
         deck.remove_cards(false, 0, 10);
 
@@ -40,7 +40,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_remove_suited_pairs() ->() {
-        let mut deck = models::Deck::new();
+        let mut deck = deck_model::Deck::new();
 
         deck.remove_cards(true, 5, 5);
     }
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_remove_high_rank() ->() {
-        let mut deck = models::Deck::new();
+        let mut deck = deck_model::Deck::new();
 
         deck.remove_cards(true, 15, 0);
     }
