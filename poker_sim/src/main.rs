@@ -1,9 +1,11 @@
 mod models;
 
 fn main() {
-    let card_list = [models::Card {suit: 0, value: 0}; 52];
+    // let card_list = [models::Card {suit: 0, value: 0}; 52];
 
-    let deck = models::Deck{cards: card_list};
+    let mut deck = models::Deck::new();
+
+    deck.shuffle();
 
     println!("{:?}", deck);
 }
