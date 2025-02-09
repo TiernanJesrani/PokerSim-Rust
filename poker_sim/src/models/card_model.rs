@@ -1,5 +1,5 @@
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub struct Card {
-    pub suit: u32, 
-    pub rank: u32
+    pub suit: usize, 
+    pub rank: usize
 }

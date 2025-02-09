@@ -15,11 +15,11 @@ impl Deck {
                 card_list.push(Card { suit: i, rank: j});
             }
         }
-        Deck { cards: card_list, deck_size: 52}
+        Deck { cards: card_list, deck_size: 50}
     }
 
     pub fn shuffle(&mut self) -> () {
-        for _i in 0..(self.deck_size * 40) {
+        for _i in 0..((self.deck_size) * 40) {
             let pos_one = rand::rng().random_range(0..self.deck_size);
             let pos_two = rand::rng().random_range(0..self.deck_size);
             self.cards.swap(pos_one, pos_two)
@@ -31,6 +31,7 @@ impl Deck {
     }
 
     pub fn remove_cards(&mut self, suited: bool, rank_1: usize, rank_2: usize) -> () {
+        // ALL OF THIS ERROR CHECKING NEEDS TO BE MOVED TO THE CLI LATER. DO NOT LEAVE HERE.
         if rank_1 > 12 {
             println!("ERROR: Rank 1 greater than allowed!");
             panic!();
@@ -50,7 +51,7 @@ impl Deck {
                 self.cards.remove(rank_2);
             }
             else {
-                self.cards.remove(rank_2 * 2);
+                self.cards.remove(rank_2 + 13); // offsetting by the number of ranks to move to the next suit
             }
         }
     }

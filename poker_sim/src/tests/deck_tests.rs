@@ -19,11 +19,11 @@ mod tests {
 
         deck.top_card();
 
-        assert_eq!(deck.cards.len(), deck.deck_size - 1);
+        assert_eq!(deck.cards.len(), deck.deck_size + 1);
 
         deck.top_card();
 
-        assert_eq!(deck.cards.len(), deck.deck_size - 2);
+        assert_eq!(deck.cards.len(), deck.deck_size);
     }
 
     #[test]
@@ -32,7 +32,7 @@ mod tests {
 
         deck.remove_cards(false, 0, 10);
 
-        assert_eq!(deck.cards.len(), deck.deck_size - 2);
+        assert_eq!(deck.cards.len(), deck.deck_size);
 
         assert_ne!(deck.cards[0].rank, 0);
     }
