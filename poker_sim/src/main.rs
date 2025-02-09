@@ -25,7 +25,9 @@ fn main() {
 
     game.river();
 
-    let pairs = game.pairs();
+    game.form_hand_strengths();
+
+    let pairs = game.main_hand_strength.pairs();
 
     println!("{:?}", pairs);
 }

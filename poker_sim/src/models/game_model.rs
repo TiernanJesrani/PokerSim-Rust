@@ -1,13 +1,16 @@
 use crate::models::player_model::Player;
 use crate::models::deck_model::Deck;
 use crate::models::card_model::Card;
+use crate::models::hand_model::HandStrength;
 
 #[derive(Debug)]
 pub struct Game {
     pub players: Vec<Player>,
     pub deck: Deck,
     pub board: Vec<Card>,
-    pub main_hand: Vec<Card>
+    pub main_hand: Vec<Card>,
+    pub hand_strengths: Vec<HandStrength>,
+    pub main_hand_strength: HandStrength
 }
 
 impl Game {
@@ -30,7 +33,8 @@ impl Game {
         deck.shuffle();
         
         Game { players: vec![Player { hand: Vec::new() }; num_players_minus_one], 
-        deck: deck, board: Vec::new(), main_hand: main_hand}
+        deck: deck, board: Vec::new(), main_hand: main_hand, main_hand_strength: 
+        HandStrength::new(Vec::new()), hand_strengths: Vec::new()}
     }
 
     pub fn deal(&mut self) {
@@ -41,7 +45,7 @@ impl Game {
     }
 
     pub fn flop(&mut self) {
-        for i in 0..3 {
+        for _i in 0..3 {
             self.board.push(self.deck.top_card());
         }
     }
@@ -56,28 +60,24 @@ impl Game {
 
     // This section deals with checking for the strength of the hands.
 
-    pub fn form_seven_cards(self) -> Vec<Card> {
-        let board_and_hand = [self.board.to_vec(), self.main_hand.to_vec()].concat();
+    pub fn form_seven_cards(&self, hand: usize) -> HandStrength {
+        let mut hand_vec = Vec::new();
+        if hand >= self.players.len() {
+            hand_vec = self.main_hand.to_vec();
+        }
+        else {
+            hand_vec = self.players[hand].hand.to_vec();
+        }
+        let board_and_hand = [self.board.to_vec(), hand_vec].concat();
 
-        board_and_hand
+        HandStrength::new(board_and_hand)
     }
 
-    pub fn pairs(self) -> Vec<usize> {
-        let seven_cards = self.form_seven_cards();
+    pub fn form_hand_strengths(&mut self) -> () {
+        self.main_hand_strength = self.form_seven_cards(self.players.len());
 
-        let mut pair_counter: [u32; 13] = [0; 13];
-
-        for i in 0..seven_cards.len() {
-            pair_counter[seven_cards[i].rank] += 1;
+        for i in 0..self.players.len() {
+            self.hand_strengths.push(self.form_seven_cards(i));
         }
-
-        let mut pairs = Vec::new();
-        for i in 0..pair_counter.len() {
-            if pair_counter[i] > 1 {
-                pairs.push(i);
-            }
-        }
-
-        pairs
     }
 }

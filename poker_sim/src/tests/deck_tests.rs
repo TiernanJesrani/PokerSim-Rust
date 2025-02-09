@@ -4,7 +4,7 @@ mod tests {
 
     #[test]
     fn test_shuffle() -> () {
-        let mut deck = deck_model::Deck::new();
+        let deck = deck_model::Deck::new();
 
         let mut deck_shuffle = deck_model::Deck::new();
 

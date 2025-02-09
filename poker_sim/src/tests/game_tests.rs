@@ -31,6 +31,7 @@ mod tests {
         assert_eq!(game.board.len(), 5);
     }
 
+    #[test]
     fn test_form_seven() -> () {
         let mut game = game_model::Game::new(5, false, 5, 5);
 
@@ -42,6 +43,19 @@ mod tests {
 
         game.river();
 
-        assert_eq!(7, game.form_seven_cards().len());
+
+
+        //assert_eq!(7, game.form_seven_cards(game.main_hand).len());
+    }
+
+    #[test]
+    fn test_pairs() -> () {
+        let mut game = game_model::Game::new(5, false, 5, 5);
+
+        game.deal();
+
+        game.form_hand_strengths();
+
+        assert_eq!(1, game.main_hand_strength.pairs().len());
     }
 }
