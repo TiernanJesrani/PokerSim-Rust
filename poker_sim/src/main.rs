@@ -29,5 +29,16 @@ fn main() {
 
     let pairs = game.main_hand_strength.pairs();
 
+    let two_pairs = game.main_hand_strength.two_pairs();
+
+    let sets = game.main_hand_strength.sets();
+
     println!("{:?}", pairs);
+
+    println!("{:?}", two_pairs);
+
+    println!("{:?}", sets);
+
+    println!("{:?}", game.main_hand_strength.seven_cards);
+    
 }

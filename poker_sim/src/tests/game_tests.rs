@@ -43,19 +43,24 @@ mod tests {
 
         game.river();
 
-
-
-        //assert_eq!(7, game.form_seven_cards(game.main_hand).len());
+        assert_eq!(7, game.form_seven_cards(13).seven_cards.len());
     }
 
+
     #[test]
-    fn test_pairs() -> () {
+    fn test_form_hands() -> () {
         let mut game = game_model::Game::new(5, false, 5, 5);
 
         game.deal();
 
+        game.flop();
+
+        game.turn();
+
+        game.river();
+
         game.form_hand_strengths();
 
-        assert_eq!(1, game.main_hand_strength.pairs().len());
+        assert_eq!(5, game.hand_strengths.len());
     }
 }
