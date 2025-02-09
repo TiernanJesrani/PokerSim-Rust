@@ -59,12 +59,10 @@ impl Game {
     pub fn form_seven_cards(self) -> Vec<Card> {
         let board_and_hand = [self.board.to_vec(), self.main_hand.to_vec()].concat();
 
-        println!("{:?}", board_and_hand);
-
         board_and_hand
     }
 
-    pub fn num_pairs(self) -> [u32; 13] {
+    pub fn pairs(self) -> Vec<usize> {
         let seven_cards = self.form_seven_cards();
 
         let mut pair_counter: [u32; 13] = [0; 13];
@@ -73,8 +71,13 @@ impl Game {
             pair_counter[seven_cards[i].rank] += 1;
         }
 
-        println!("{:?}", pair_counter);
+        let mut pairs = Vec::new();
+        for i in 0..pair_counter.len() {
+            if pair_counter[i] > 1 {
+                pairs.push(i);
+            }
+        }
 
-        pair_counter
+        pairs
     }
 }

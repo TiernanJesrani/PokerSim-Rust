@@ -25,5 +25,7 @@ fn main() {
 
     game.river();
 
-   game.num_pairs();
+    let pairs = game.pairs();
+
+    println!("{:?}", pairs);
 }
