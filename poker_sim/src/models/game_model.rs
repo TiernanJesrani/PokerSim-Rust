@@ -68,7 +68,8 @@ impl Game {
         else {
             hand_vec = self.players[hand].hand.to_vec();
         }
-        let board_and_hand = [self.board.to_vec(), hand_vec].concat();
+        let mut board_and_hand = [self.board.to_vec(), hand_vec].concat();
+        board_and_hand.sort_by_key(|x| x.rank);
 
         HandStrength::new(board_and_hand)
     }
