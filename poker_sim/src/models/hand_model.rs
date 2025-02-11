@@ -341,20 +341,73 @@ impl HandStrength {
             self.add_aces_top();
             let mut i = self.seven_cards.len() - 1;
 
-            while self.seven_cards[i].rank == quads {
+
+            for _j in 0..2 {
+                while i > 0 && self.seven_cards[i].rank == set {
+                    i -= 1;
+                }
+    
+                self.cards_leftover[self.seven_cards[i].rank] = 1;
                 i -= 1;
             }
-
-            self.cards_leftover[self.seven_cards[i].rank] = 1;
-
-            i -= 1;
-            self.cards_leftover[self.seven_cards[i].rank] = 1;
-    
             
+            self.remove_aces_top();
             return
         }
 
         let mut two_pair = self.best_two_pair();
+        if two_pair.0 != 0 {
+            self.hand_type[2] = 1;
+            self.cards_involved[two_pair.0] = 1;
+            self.cards_involved[two_pair.1] = 1;
 
+            self.add_aces_top();
+            let mut i = self.seven_cards.len() - 1;
+
+            while i > 0 && self.seven_cards[i].rank == set {
+                i -= 1;
+            }
+
+            self.cards_leftover[self.seven_cards[i].rank] = 1;
+            
+            self.remove_aces_top();
+
+            return
+        }   
+        
+        let mut pair = self.best_pair();
+        if pair != 0 {
+            self.hand_type[1] = 1;
+            self.cards_involved[pair] = 1;
+
+            self.add_aces_top();
+            let mut i = self.seven_cards.len() - 1;
+
+            for j in 0..3 {
+                while i > 0 && self.seven_cards[i].rank == pair {
+                    i -= 1;
+                }
+
+                self.cards_leftover[self.seven_cards[i].rank] = 1;
+
+                i -= 1;
+            }
+
+            self.remove_aces_top();
+
+            return
+        }
+
+        self.hand_type[0] = 1;
+        
+        self.add_aces_top();
+
+        for i in ((self.seven_cards.len() - 5)..(self.seven_cards.len())).rev() {
+            self.cards_involved[self.seven_cards[i].rank] = 1;
+        }
+
+        self.remove_aces_top();
+
+        return
     }
 }
