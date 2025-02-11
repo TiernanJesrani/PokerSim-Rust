@@ -2,13 +2,24 @@ use crate::models::card_model::Card;
 
 #[derive(Debug)]
 pub struct HandStrength {
-    pub seven_cards: Vec<Card>
+    pub seven_cards: Vec<Card>,
+    pub hand_type: [u32; 9],
+    pub cards_involved: [u32; 14],
+    pub cards_leftover: [u32; 14],
+    
 }
 
 impl HandStrength {
     pub fn new(seven_cards: Vec<Card>) -> HandStrength {
         
-        HandStrength { seven_cards: seven_cards}
+        HandStrength { seven_cards: seven_cards, hand_type: [0; 9], cards_involved: [0; 14], cards_leftover: [0; 14]}
+    }
+
+    pub fn convert_if_ace(&self, rank: usize) -> usize {
+        if rank == 0 {
+            return 13;
+        }
+        return rank;
     }
 
     pub fn rank_count(&self) -> [u32; 13] {
@@ -23,27 +34,16 @@ impl HandStrength {
         rank_counter
     }
 
-    pub fn suit_count(&self) -> [u32; 4] {
-        let seven_cards = &self.seven_cards;
-
-        let mut suit_counter: [u32; 4] = [0; 4];
-
-        for i in 0..seven_cards.len() {
-            suit_counter[seven_cards[i].suit] += 1;
-        }
-
-        suit_counter
-    }
-
     pub fn pairs(&self) -> Vec<usize> {
         let pair_counter = self.rank_count();
 
         let mut pairs = Vec::new();
         for i in 0..pair_counter.len() {
             if pair_counter[i] > 1 {
-                pairs.push(i);
+                pairs.push(self.convert_if_ace(i));
             }
         }
+        pairs.sort();
 
         pairs
     }
@@ -70,9 +70,10 @@ impl HandStrength {
 
         for i in 0..rank_count.len() {
             if rank_count[i] > 2 {
-                sets.push(i);
+                sets.push(self.convert_if_ace(i));
             }
         }
+        sets.sort();
 
         sets
     }
@@ -85,7 +86,7 @@ impl HandStrength {
 
         for i in 0..rank_count.len() {
             if rank_count[i] > 3 {
-                quads.push(i);
+                quads.push(self.convert_if_ace(i));
             }
         }
 
@@ -107,6 +108,8 @@ impl HandStrength {
             }
         }
 
+        fullhouses.sort_unstable_by_key(|x| (x.0, x.1));
+
         fullhouses
     }
     pub fn add_aces_top(&mut self) -> () {
@@ -126,7 +129,7 @@ impl HandStrength {
     pub fn straights(&mut self) -> Vec<(usize, bool)> {
         self.add_aces_top();
         let mut straights = Vec::new();
-        println!("{:?}", self.seven_cards);
+
         for x in 1..self.seven_cards.len() {
             if self.seven_cards[x].rank == self.seven_cards[x - 1].rank {
                 continue;
@@ -176,7 +179,182 @@ impl HandStrength {
             }
         }
         self.remove_aces_top();
+        straights.sort_unstable_by_key(|x| (x.1, x.0));
 
         straights
+    }
+
+    pub fn flushes(&self) -> Vec<usize> {
+        let mut flush_counts = vec![
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new()
+        ];
+
+        for i in 0..self.seven_cards.len() {
+            flush_counts[self.seven_cards[i].suit].push(self.convert_if_ace(self.seven_cards[i].rank));
+        }
+
+        for i in 0..flush_counts.len() {
+            if flush_counts[i].len() > 4 {
+                flush_counts[i].sort();
+
+                return flush_counts[i].clone();
+            }
+        }
+
+        Vec::new()
+    }
+
+    pub fn best_straight(&mut self) -> (usize, bool) {
+        let mut straights = self.straights();
+
+        let mut high_card = 0;
+        let mut flush = false;
+
+        if straights.len() > 0 {
+            high_card = straights[straights.len() - 1].0;
+            flush = straights[straights.len() - 1].1;
+        }
+
+        (high_card, flush)
+    }
+
+    pub fn best_fullhouse(&self) -> (usize, usize) {
+        let mut fullhouses = self.fullhouses();
+
+        let mut set = 0;
+        let mut pair = 0;
+        
+        if fullhouses.len() > 0 {
+            set = fullhouses[fullhouses.len() - 1].0;
+            pair = fullhouses[fullhouses.len() - 1].1;
+        }
+
+        (set, pair)
+    }
+
+    pub fn best_flush(&self) -> Vec<usize> {
+        self.flushes()
+    }
+
+    pub fn best_quads(&self) -> usize {
+        let mut quads = self.quads();
+
+        if quads.len() > 0 {
+            return quads[0];
+        }
+
+        0
+    }
+
+    pub fn best_set(&self) -> usize {
+        let mut sets = self.sets();
+
+        if sets.len() > 0 {
+            return sets[sets.len() - 1];
+        }
+
+        0
+    }
+    
+
+    pub fn best_two_pair(&self) -> (usize, usize) {
+        let mut two_pairs = self.two_pairs();
+
+        if two_pairs.len() > 0 {
+            return two_pairs[two_pairs.len() - 1];
+        }
+
+        (0, 0)
+    }
+
+    pub fn best_pair(&self) -> usize {
+        let mut pairs = self.pairs();
+
+        if pairs.len() > 0 {
+            return pairs[pairs.len() - 1];
+        }
+
+        0
+    }
+
+    pub fn best_five_combo(&mut self) -> () {
+
+        let mut straight = self.best_straight();
+        if straight.0 != 0 && straight.1 == true {
+            self.hand_type[8] = 1;
+            self.cards_involved[straight.0] = 1;
+            return
+        }
+        
+        let mut quads = self.best_quads();
+        if quads != 0 {
+            self.hand_type[7] = 1;
+            self.cards_involved[quads] = 1;
+
+            if self.seven_cards.len() > 4 {
+                self.add_aces_top();
+                let mut i = self.seven_cards.len() - 1;
+
+                while self.seven_cards[i].rank == quads {
+                    i -= 1;
+                }
+
+                self.cards_leftover[self.seven_cards[i].rank] = 1;
+                self.remove_aces_top();
+            }
+            return
+        }
+
+        let mut fullhouse = self.best_fullhouse();
+        if fullhouse.0 != 0 {
+            self.hand_type[6] = 1;
+            self.cards_involved[fullhouse.0] = 1;
+            self.cards_involved[fullhouse.1] = 1;
+            return
+        }
+
+        let mut flush = self.best_flush();
+        if flush.len() != 0 {
+            self.hand_type[5] = 1;
+
+            for i in ((flush.len() - 5)..(flush.len())).rev() {
+                self.cards_involved[flush[i]] = 1;
+            }
+
+            return
+        }
+
+        if straight.0 != 0 {
+            self.hand_type[4] = 1;
+            self.cards_involved[straight.0] = 1;
+            return
+        }
+
+        let mut set = self.best_set();
+        if set != 0 {
+            self.hand_type[3] = 1;
+            self.cards_involved[set] = 1;
+
+            self.add_aces_top();
+            let mut i = self.seven_cards.len() - 1;
+
+            while self.seven_cards[i].rank == quads {
+                i -= 1;
+            }
+
+            self.cards_leftover[self.seven_cards[i].rank] = 1;
+
+            i -= 1;
+            self.cards_leftover[self.seven_cards[i].rank] = 1;
+    
+            
+            return
+        }
+
+        let mut two_pair = self.best_two_pair();
+
     }
 }
