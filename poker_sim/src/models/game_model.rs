@@ -95,7 +95,7 @@ impl Game {
                 }
             }
         }
-        0
+        1
     }
 
     pub fn main_wins(&mut self) -> u32 {

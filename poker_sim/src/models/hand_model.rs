@@ -11,7 +11,6 @@ pub struct HandStrength {
 
 impl HandStrength {
     pub fn new(seven_cards: Vec<Card>) -> HandStrength {
-        
         HandStrength { seven_cards: seven_cards, hand_type: [0; 9], cards_involved: [0; 14], cards_leftover: [0; 14]}
     }
 
@@ -258,7 +257,6 @@ impl HandStrength {
 
         0
     }
-    
 
     pub fn best_two_pair(&self) -> (usize, usize) {
         let two_pairs = self.two_pairs();
@@ -341,7 +339,6 @@ impl HandStrength {
 
             self.add_aces_top();
             let mut i = self.seven_cards.len() - 1;
-
 
             for _j in 0..2 {
                 while i > 0 && self.seven_cards[i].rank == set {

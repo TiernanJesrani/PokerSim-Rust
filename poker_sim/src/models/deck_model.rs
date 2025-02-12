@@ -44,13 +44,13 @@ impl Deck {
             panic!();
         }
         else {
-            self.cards.remove(rank_1);
-
             if suited == true {
-                self.cards.remove(rank_2);
+                self.cards.remove(std::cmp::max(rank_1, rank_2));
+                self.cards.remove(std::cmp::min(rank_1, rank_2));
             }
             else {
-                self.cards.remove(rank_2 + 13); // offsetting by the number of ranks to move to the next suit
+                self.cards.remove(rank_2 + 13);
+                self.cards.remove(rank_1);
             }
         }
     }
