@@ -163,7 +163,7 @@ impl HandStrength {
                     break;
                 }
                 if counter == 5 {
-                    let mut x = i - 1;
+                    let x = i - 1;
                     let mut y = i + 1;
                     if !suited {
                         while y < self.seven_cards.len() && self.seven_cards[y].rank == self.seven_cards[i].rank {
@@ -208,7 +208,7 @@ impl HandStrength {
     }
 
     pub fn best_straight(&mut self) -> (usize, bool) {
-        let mut straights = self.straights();
+        let straights = self.straights();
 
         let mut high_card = 0;
         let mut flush = false;
@@ -222,7 +222,7 @@ impl HandStrength {
     }
 
     pub fn best_fullhouse(&self) -> (usize, usize) {
-        let mut fullhouses = self.fullhouses();
+        let fullhouses = self.fullhouses();
 
         let mut set = 0;
         let mut pair = 0;
@@ -240,7 +240,7 @@ impl HandStrength {
     }
 
     pub fn best_quads(&self) -> usize {
-        let mut quads = self.quads();
+        let quads = self.quads();
 
         if quads.len() > 0 {
             return quads[0];
@@ -250,7 +250,7 @@ impl HandStrength {
     }
 
     pub fn best_set(&self) -> usize {
-        let mut sets = self.sets();
+        let sets = self.sets();
 
         if sets.len() > 0 {
             return sets[sets.len() - 1];
@@ -261,7 +261,7 @@ impl HandStrength {
     
 
     pub fn best_two_pair(&self) -> (usize, usize) {
-        let mut two_pairs = self.two_pairs();
+        let two_pairs = self.two_pairs();
 
         if two_pairs.len() > 0 {
             return two_pairs[two_pairs.len() - 1];
@@ -271,7 +271,7 @@ impl HandStrength {
     }
 
     pub fn best_pair(&self) -> usize {
-        let mut pairs = self.pairs();
+        let pairs = self.pairs();
 
         if pairs.len() > 0 {
             return pairs[pairs.len() - 1];
@@ -282,14 +282,14 @@ impl HandStrength {
 
     pub fn best_five_combo(&mut self) -> () {
 
-        let mut straight = self.best_straight();
+        let straight = self.best_straight();
         if straight.0 != 0 && straight.1 == true {
             self.hand_type[8] = 1;
             self.cards_involved[straight.0] = 1;
             return
         }
         
-        let mut quads = self.best_quads();
+        let quads = self.best_quads();
         if quads != 0 {
             self.hand_type[7] = 1;
             self.cards_involved[quads] = 1;
@@ -308,15 +308,16 @@ impl HandStrength {
             return
         }
 
-        let mut fullhouse = self.best_fullhouse();
+        let fullhouse = self.best_fullhouse();
         if fullhouse.0 != 0 {
             self.hand_type[6] = 1;
             self.cards_involved[fullhouse.0] = 1;
             self.cards_involved[fullhouse.1] = 1;
+            self.cards_leftover[fullhouse.1] = 1;
             return
         }
 
-        let mut flush = self.best_flush();
+        let flush = self.best_flush();
         if flush.len() != 0 {
             self.hand_type[5] = 1;
 
@@ -333,7 +334,7 @@ impl HandStrength {
             return
         }
 
-        let mut set = self.best_set();
+        let set = self.best_set();
         if set != 0 {
             self.hand_type[3] = 1;
             self.cards_involved[set] = 1;
@@ -355,7 +356,7 @@ impl HandStrength {
             return
         }
 
-        let mut two_pair = self.best_two_pair();
+        let two_pair = self.best_two_pair();
         if two_pair.0 != 0 {
             self.hand_type[2] = 1;
             self.cards_involved[two_pair.0] = 1;
@@ -375,7 +376,7 @@ impl HandStrength {
             return
         }   
         
-        let mut pair = self.best_pair();
+        let pair = self.best_pair();
         if pair != 0 {
             self.hand_type[1] = 1;
             self.cards_involved[pair] = 1;
@@ -383,7 +384,7 @@ impl HandStrength {
             self.add_aces_top();
             let mut i = self.seven_cards.len() - 1;
 
-            for j in 0..3 {
+            for _j in 0..3 {
                 while i > 0 && self.seven_cards[i].rank == pair {
                     i -= 1;
                 }

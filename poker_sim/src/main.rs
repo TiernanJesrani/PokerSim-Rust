@@ -1,33 +1,48 @@
 mod models;
 mod tests;
+use std::time::Instant;
 
 fn main() {
-    let mut game = models::game_model::Game::new(5, false, 1, 1);
+    let start_time = Instant::now();    
+    let mut sum = 0;
+    for _i in 0..100_000 {
+        let mut game = models::game_model::Game::new(3, false, 0, 0);
 
-    game.deal();
+        game.deal();
 
-    let card = models::card_model::Card::new(2, 1);
+        game.flop();
 
-    game.board.push(card);
+        game.turn();
 
-    let card = models::card_model::Card::new(0, 10);
+        game.river();
 
-    game.board.push(card);
+        game.form_hand_strengths();
 
-    let card = models::card_model::Card::new(0, 0);
+        sum += game.main_wins();
+    }
+    let elapsed = start_time.elapsed();
+    println!("Elapsed time: {:?}", elapsed);
+    println!("AA wins: {:?}%", ( sum as f32 / 100_000 as f32))
 
-    game.board.push(card);
+    // game.deal();
 
-    let card = models::card_model::Card::new(2, 11);
+    // game.flop();
 
-    game.board.push(card);
+    // game.turn();
 
-    game.form_hand_strengths();
+    // game.river();
 
-    game.main_hand_strength.best_five_combo();
+    // game.form_hand_strengths();
 
-    //assert_eq!(game.main_hand_strength.cards_leftover[13], 1);
+    // for i in 0..game.hand_strengths.len() {
+    //     println!("\n{:?}", game.hand_strengths[i].hand_type);
+    //     println!("{:?}", game.hand_strengths[i].cards_involved);
+    //     println!("{:?}", game.hand_strengths[i].cards_leftover);
+    // }
+    // println!("\n{:?}", game.main_hand_strength.hand_type);
+    // println!("{:?}", game.main_hand_strength.cards_involved);
+    // println!("{:?}", game.main_hand_strength.cards_leftover);
 
-    println!("{:?}", game.main_hand_strength.cards_leftover);
+    // println!("{:?}", game.main_wins());
     
 }

@@ -9,6 +9,26 @@ mod tests {
 
         game.deal();
 
+        let card = card_model::Card::new(3, 1);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 2);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 7);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 10);
+
+        game.board.push(card);
+
         game.form_hand_strengths();
 
         assert_eq!(1, game.main_hand_strength.pairs().len());
@@ -24,7 +44,19 @@ mod tests {
 
         game.board.push(card);
 
-        let card = card_model::Card::new(4, 6);
+        let card = card_model::Card::new(3, 6);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 7);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 11);
 
         game.board.push(card);
 
@@ -70,7 +102,19 @@ mod tests {
 
         game.board.push(card);
 
-        let card = card_model::Card::new(4, 5);
+        let card = card_model::Card::new(1, 5);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 5);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(1, 10);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(1, 7);
 
         game.board.push(card);
 
@@ -89,7 +133,7 @@ mod tests {
 
         game.board.push(card);
 
-        let card = card_model::Card::new(4, 6);
+        let card = card_model::Card::new(2, 6);
 
         game.board.push(card);
 
@@ -240,6 +284,14 @@ mod tests {
 
         game.board.push(card);
 
+        let card = card_model::Card::new(1, 10);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 8);
+
+        game.board.push(card);
+
         game.form_hand_strengths();
 
         assert_eq!(3, game.main_hand_strength.flushes()[0]);
@@ -347,6 +399,202 @@ mod tests {
     }
 
     #[test]
+    fn test_pair_grid() -> () { 
+        let mut game = game_model::Game::new(5, false, 1, 1);
+
+        game.deal();
+
+        let card = card_model::Card::new(3, 0);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 4);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 3);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[1], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[1], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[13], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[4], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[8], 1);
+    }
+
+    #[test]
+    fn test_two_pair_grid() -> () { 
+        let mut game = game_model::Game::new(5, false, 2, 1);
+
+        game.deal();
+
+        let card = card_model::Card::new(3, 2);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 1);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 3);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[2], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[1], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[2], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[8], 1);
+    }
+
+    #[test]
+    fn test_set_grid() -> () { 
+        let mut game = game_model::Game::new(5, false, 1, 1);
+
+        game.deal();
+
+        let card = card_model::Card::new(3, 1);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 4);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 3);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[3], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[1], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[4], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[8], 1);
+    }
+
+    #[test]
+    fn test_straight_grid() -> () { 
+        let mut game = game_model::Game::new(5, false, 1, 2);
+
+        game.deal();
+
+        let card = card_model::Card::new(3, 3);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 4);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 0);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 8);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[4], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[4], 1);
+    }
+
+    #[test]
+    fn test_flush_grid() -> () { 
+        let mut game = game_model::Game::new(5, true, 0, 1);
+
+        game.deal();
+
+        let card = card_model::Card::new(0, 2);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 7);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 11);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 12);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[5], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[13], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[12], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[11], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[7], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[2], 1);
+    }
+
+    #[test]
+    fn test_fullhouse_grid() -> () { 
+        let mut game = game_model::Game::new(5, true, 0, 1);
+
+        game.deal();
+
+        let card = card_model::Card::new(1, 1);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(1, 0);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(3, 0);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 12);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(2, 5);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[6], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[13], 1);
+        assert_eq!(game.main_hand_strength.cards_leftover[1], 1);
+    }
+
+    #[test]
     fn test_quads_grid() -> () {
         let mut game = game_model::Game::new(5, false, 1, 1);
 
@@ -370,8 +618,40 @@ mod tests {
 
         game.form_hand_strengths();
 
-        game.main_hand_strength.best_five_combo();
+        //game.main_hand_strength.best_five_combo();
 
+        assert_eq!(game.main_hand_strength.hand_type[7], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[1], 1);
         assert_eq!(game.main_hand_strength.cards_leftover[13], 1);
+    }
+
+    #[test]
+    fn test_straight_flush_grid() -> () { 
+        let mut game = game_model::Game::new(5, true, 0, 2);
+
+        game.deal();
+
+        let card = card_model::Card::new(0, 3);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 4);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 5);
+
+        game.board.push(card);
+
+        let card = card_model::Card::new(0, 6);
+
+        game.board.push(card);
+
+        game.form_hand_strengths();
+
+        //game.main_hand_strength.best_five_combo();
+
+        assert_eq!(game.main_hand_strength.hand_type[8], 1);
+        assert_eq!(game.main_hand_strength.cards_involved[6], 1);
     }
 }

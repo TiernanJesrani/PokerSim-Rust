@@ -17,17 +17,12 @@ impl Game {
     pub fn new(num_players_minus_one: usize, suited: bool, rank_1: usize, rank_2: usize) -> Game {
         let mut deck = Deck::new();
 
-        let mut main_hand = Vec::new();
-
-        main_hand.push(deck.cards[rank_1]);
-
-        if suited == true {
-            main_hand.push(deck.cards[rank_2]);
-        }
-        else {
-            main_hand.push(deck.cards[rank_2 + 13]); // offsetting by the number of ranks to move to the next suit
-        }
-
+        let main_hand = if suited {
+            vec![deck.cards[rank_1], deck.cards[rank_2]]
+        } else {
+            vec![deck.cards[rank_1], deck.cards[rank_2 + 13]]
+        };
+    
         deck.remove_cards(suited, rank_1, rank_2);
 
         deck.shuffle();
@@ -61,13 +56,11 @@ impl Game {
     // This section deals with checking for the strength of the hands.
 
     pub fn form_seven_cards(&self, hand: usize) -> HandStrength {
-        let mut hand_vec = Vec::new();
-        if hand >= self.players.len() {
-            hand_vec = self.main_hand.to_vec();
-        }
-        else {
-            hand_vec = self.players[hand].hand.to_vec();
-        }
+        let hand_vec = if hand >= self.players.len() {
+            self.main_hand.to_vec()
+        } else {
+            self.players[hand].hand.to_vec()
+        };
         let mut board_and_hand = [self.board.to_vec(), hand_vec].concat();
         board_and_hand.sort_by_key(|x| x.rank);
 
@@ -76,9 +69,42 @@ impl Game {
 
     pub fn form_hand_strengths(&mut self) -> () {
         self.main_hand_strength = self.form_seven_cards(self.players.len());
+        self.main_hand_strength.best_five_combo();
 
         for i in 0..self.players.len() {
             self.hand_strengths.push(self.form_seven_cards(i));
+            //self.hand_strengths[i].best_five_combo();
         }
+    }
+
+    pub fn beats_main_hand(&self, player_pos: usize) -> u32 {
+        for i in 0..self.main_hand_strength.hand_type.len() {
+            if self.main_hand_strength.hand_type[i] != self.hand_strengths[player_pos].hand_type[i] {
+                return self.main_hand_strength.hand_type[i];
+            }
+            else if self.main_hand_strength.hand_type[i] == 1 {
+                for j in (0..self.main_hand_strength.cards_involved.len()).rev() {
+                    if self.main_hand_strength.cards_involved[j] != self.hand_strengths[player_pos].cards_involved[j] {
+                        return self.hand_strengths[player_pos].cards_involved[j];
+                    }
+                }
+                for k in (0..self.main_hand_strength.cards_leftover.len()).rev() {
+                    if self.main_hand_strength.cards_leftover[k] != self.hand_strengths[player_pos].cards_leftover[k] {
+                        return self.hand_strengths[player_pos].cards_leftover[k];
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    pub fn main_wins(&mut self) -> u32 {
+        for i in 0..self.hand_strengths.len() {
+            self.hand_strengths[i].best_five_combo();
+            if self.beats_main_hand(i) == 1 {
+                return 0
+            }
+        }
+        1
     }
 }

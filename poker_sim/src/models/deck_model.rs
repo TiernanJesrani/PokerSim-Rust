@@ -19,10 +19,9 @@ impl Deck {
     }
 
     pub fn shuffle(&mut self) -> () {
-        for _i in 0..((self.deck_size) * 40) {
-            let pos_one = rand::rng().random_range(0..self.deck_size);
-            let pos_two = rand::rng().random_range(0..self.deck_size);
-            self.cards.swap(pos_one, pos_two)
+        for i in (1..self.deck_size).rev() {
+            let j = rand::rng().random_range(0..=i);
+            self.cards.swap(i, j);
         }
     }
 
