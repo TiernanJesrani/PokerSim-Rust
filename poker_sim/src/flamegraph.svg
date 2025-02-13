@@ -1,0 +1,491 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg version="1.1" width="1200" height="358" onload="init(evt)" viewBox="0 0 1200 358" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:fg="http://github.com/jonhoo/inferno"><!--Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples.--><!--NOTES: --><defs><linearGradient id="background" y1="0" y2="1" x1="0" x2="0"><stop stop-color="#eeeeee" offset="5%"/><stop stop-color="#eeeeb0" offset="95%"/></linearGradient></defs><style type="text/css">
+text { font-family:monospace; font-size:12px }
+#title { text-anchor:middle; font-size:17px; }
+#matched { text-anchor:end; }
+#search { text-anchor:end; opacity:0.1; cursor:pointer; }
+#search:hover, #search.show { opacity:1; }
+#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+#unzoom { cursor:pointer; }
+#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+.hide { display:none; }
+.parent { opacity:0.5; }
+</style><script type="text/ecmascript"><![CDATA[
+        var nametype = 'Function:';
+        var fontsize = 12;
+        var fontwidth = 0.59;
+        var xpad = 10;
+        var inverted = false;
+        var searchcolor = 'rgb(230,0,230)';
+        var fluiddrawing = true;
+        var truncate_text_right = false;
+    ]]><![CDATA["use strict";
+var details, searchbtn, unzoombtn, matchedtxt, svg, searching, frames, known_font_width;
+function init(evt) {
+    details = document.getElementById("details").firstChild;
+    searchbtn = document.getElementById("search");
+    unzoombtn = document.getElementById("unzoom");
+    matchedtxt = document.getElementById("matched");
+    svg = document.getElementsByTagName("svg")[0];
+    frames = document.getElementById("frames");
+    known_font_width = get_monospace_width(frames);
+    total_samples = parseInt(frames.attributes.total_samples.value);
+    searching = 0;
+
+    // Use GET parameters to restore a flamegraph's state.
+    var restore_state = function() {
+        var params = get_params();
+        if (params.x && params.y)
+            zoom(find_group(document.querySelector('[*|x="' + params.x + '"][y="' + params.y + '"]')));
+        if (params.s)
+            search(params.s);
+    };
+
+    if (fluiddrawing) {
+        // Make width dynamic so the SVG fits its parent's width.
+        svg.removeAttribute("width");
+        // Edge requires us to have a viewBox that gets updated with size changes.
+        var isEdge = /Edge\/\d./i.test(navigator.userAgent);
+        if (!isEdge) {
+            svg.removeAttribute("viewBox");
+        }
+        var update_for_width_change = function() {
+            if (isEdge) {
+                svg.attributes.viewBox.value = "0 0 " + svg.width.baseVal.value + " " + svg.height.baseVal.value;
+            }
+
+            // Keep consistent padding on left and right of frames container.
+            frames.attributes.width.value = svg.width.baseVal.value - xpad * 2;
+
+            // Text truncation needs to be adjusted for the current width.
+            update_text_for_elements(frames.children);
+
+            // Keep search elements at a fixed distance from right edge.
+            var svgWidth = svg.width.baseVal.value;
+            searchbtn.attributes.x.value = svgWidth - xpad;
+            matchedtxt.attributes.x.value = svgWidth - xpad;
+        };
+        window.addEventListener('resize', function() {
+            update_for_width_change();
+        });
+        // This needs to be done asynchronously for Safari to work.
+        setTimeout(function() {
+            unzoom();
+            update_for_width_change();
+            restore_state();
+        }, 0);
+    } else {
+        restore_state();
+    }
+}
+// event listeners
+window.addEventListener("click", function(e) {
+    var target = find_group(e.target);
+    if (target) {
+        if (target.nodeName == "a") {
+            if (e.ctrlKey === false) return;
+            e.preventDefault();
+        }
+        if (target.classList.contains("parent")) unzoom();
+        zoom(target);
+
+        // set parameters for zoom state
+        var el = target.querySelector("rect");
+        if (el && el.attributes && el.attributes.y && el.attributes["fg:x"]) {
+            var params = get_params()
+            params.x = el.attributes["fg:x"].value;
+            params.y = el.attributes.y.value;
+            history.replaceState(null, null, parse_params(params));
+        }
+    }
+    else if (e.target.id == "unzoom") {
+        unzoom();
+
+        // remove zoom state
+        var params = get_params();
+        if (params.x) delete params.x;
+        if (params.y) delete params.y;
+        history.replaceState(null, null, parse_params(params));
+    }
+    else if (e.target.id == "search") search_prompt();
+}, false)
+// mouse-over for info
+// show
+window.addEventListener("mouseover", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = nametype + " " + g_to_text(target);
+}, false)
+// clear
+window.addEventListener("mouseout", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = ' ';
+}, false)
+// ctrl-F for search
+window.addEventListener("keydown",function (e) {
+    if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+        e.preventDefault();
+        search_prompt();
+    }
+}, false)
+// functions
+function get_params() {
+    var params = {};
+    var paramsarr = window.location.search.substr(1).split('&');
+    for (var i = 0; i < paramsarr.length; ++i) {
+        var tmp = paramsarr[i].split("=");
+        if (!tmp[0] || !tmp[1]) continue;
+        params[tmp[0]]  = decodeURIComponent(tmp[1]);
+    }
+    return params;
+}
+function parse_params(params) {
+    var uri = "?";
+    for (var key in params) {
+        uri += key + '=' + encodeURIComponent(params[key]) + '&';
+    }
+    if (uri.slice(-1) == "&")
+        uri = uri.substring(0, uri.length - 1);
+    if (uri == '?')
+        uri = window.location.href.split('?')[0];
+    return uri;
+}
+function find_child(node, selector) {
+    var children = node.querySelectorAll(selector);
+    if (children.length) return children[0];
+    return;
+}
+function find_group(node) {
+    var parent = node.parentElement;
+    if (!parent) return;
+    if (parent.id == "frames") return node;
+    return find_group(parent);
+}
+function orig_save(e, attr, val) {
+    if (e.attributes["fg:orig_" + attr] != undefined) return;
+    if (e.attributes[attr] == undefined) return;
+    if (val == undefined) val = e.attributes[attr].value;
+    e.setAttribute("fg:orig_" + attr, val);
+}
+function orig_load(e, attr) {
+    if (e.attributes["fg:orig_"+attr] == undefined) return;
+    e.attributes[attr].value = e.attributes["fg:orig_" + attr].value;
+    e.removeAttribute("fg:orig_" + attr);
+}
+function g_to_text(e) {
+    var text = find_child(e, "title").firstChild.nodeValue;
+    return (text)
+}
+function g_to_func(e) {
+    var func = g_to_text(e);
+    // if there's any manipulation we want to do to the function
+    // name before it's searched, do it here before returning.
+    return (func);
+}
+function get_monospace_width(frames) {
+    // Given the id="frames" element, return the width of text characters if
+    // this is a monospace font, otherwise return 0.
+    text = find_child(frames.children[0], "text");
+    originalContent = text.textContent;
+    text.textContent = "!";
+    bangWidth = text.getComputedTextLength();
+    text.textContent = "W";
+    wWidth = text.getComputedTextLength();
+    text.textContent = originalContent;
+    if (bangWidth === wWidth) {
+        return bangWidth;
+    } else {
+        return 0;
+    }
+}
+function update_text_for_elements(elements) {
+    // In order to render quickly in the browser, you want to do one pass of
+    // reading attributes, and one pass of mutating attributes. See
+    // https://web.dev/avoid-large-complex-layouts-and-layout-thrashing/ for details.
+
+    // Fall back to inefficient calculation, if we're variable-width font.
+    // TODO This should be optimized somehow too.
+    if (known_font_width === 0) {
+        for (var i = 0; i < elements.length; i++) {
+            update_text(elements[i]);
+        }
+        return;
+    }
+
+    var textElemNewAttributes = [];
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var r = find_child(e, "rect");
+        var t = find_child(e, "text");
+        var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+        var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+        var newX = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+        // Smaller than this size won't fit anything
+        if (w < 2 * known_font_width) {
+            textElemNewAttributes.push([newX, ""]);
+            continue;
+        }
+
+        // Fit in full text width
+        if (txt.length * known_font_width < w) {
+            textElemNewAttributes.push([newX, txt]);
+            continue;
+        }
+
+        var substringLength = Math.floor(w / known_font_width) - 2;
+        if (truncate_text_right) {
+            // Truncate the right side of the text.
+            textElemNewAttributes.push([newX, txt.substring(0, substringLength) + ".."]);
+            continue;
+        } else {
+            // Truncate the left side of the text.
+            textElemNewAttributes.push([newX, ".." + txt.substring(txt.length - substringLength, txt.length)]);
+            continue;
+        }
+    }
+
+    console.assert(textElemNewAttributes.length === elements.length, "Resize failed, please file a bug at https://github.com/jonhoo/inferno/");
+
+    // Now that we know new textContent, set it all in one go so we don't refresh a bazillion times.
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var values = textElemNewAttributes[i];
+        var t = find_child(e, "text");
+        t.attributes.x.value = values[0];
+        t.textContent = values[1];
+    }
+}
+
+function update_text(e) {
+    var r = find_child(e, "rect");
+    var t = find_child(e, "text");
+    var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+    var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+    t.attributes.x.value = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+    // Smaller than this size won't fit anything
+    if (w < 2 * fontsize * fontwidth) {
+        t.textContent = "";
+        return;
+    }
+    t.textContent = txt;
+    // Fit in full text width
+    if (t.getComputedTextLength() < w)
+        return;
+    if (truncate_text_right) {
+        // Truncate the right side of the text.
+        for (var x = txt.length - 2; x > 0; x--) {
+            if (t.getSubStringLength(0, x + 2) <= w) {
+                t.textContent = txt.substring(0, x) + "..";
+                return;
+            }
+        }
+    } else {
+        // Truncate the left side of the text.
+        for (var x = 2; x < txt.length; x++) {
+            if (t.getSubStringLength(x - 2, txt.length) <= w) {
+                t.textContent = ".." + txt.substring(x, txt.length);
+                return;
+            }
+        }
+    }
+    t.textContent = "";
+}
+// zoom
+function zoom_reset(e) {
+    if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * parseInt(e.attributes["fg:x"].value) / total_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / total_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_reset(c[i]);
+    }
+}
+function zoom_child(e, x, zoomed_width_samples) {
+    if (e.tagName == "text") {
+        var parent_x = parseFloat(find_child(e.parentNode, "rect[x]").attributes.x.value);
+        e.attributes.x.value = format_percent(parent_x + (100 * 3 / frames.attributes.width.value));
+    } else if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * (parseInt(e.attributes["fg:x"].value) - x) / zoomed_width_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / zoomed_width_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_child(c[i], x, zoomed_width_samples);
+    }
+}
+function zoom_parent(e) {
+    if (e.attributes) {
+        if (e.attributes.x != undefined) {
+            e.attributes.x.value = "0.0%";
+        }
+        if (e.attributes.width != undefined) {
+            e.attributes.width.value = "100.0%";
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_parent(c[i]);
+    }
+}
+function zoom(node) {
+    var attr = find_child(node, "rect").attributes;
+    var width = parseInt(attr["fg:w"].value);
+    var xmin = parseInt(attr["fg:x"].value);
+    var xmax = xmin + width;
+    var ymin = parseFloat(attr.y.value);
+    unzoombtn.classList.remove("hide");
+    var el = frames.children;
+    var to_update_text = [];
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var a = find_child(e, "rect").attributes;
+        var ex = parseInt(a["fg:x"].value);
+        var ew = parseInt(a["fg:w"].value);
+        // Is it an ancestor
+        if (!inverted) {
+            var upstack = parseFloat(a.y.value) > ymin;
+        } else {
+            var upstack = parseFloat(a.y.value) < ymin;
+        }
+        if (upstack) {
+            // Direct ancestor
+            if (ex <= xmin && (ex+ew) >= xmax) {
+                e.classList.add("parent");
+                zoom_parent(e);
+                to_update_text.push(e);
+            }
+            // not in current path
+            else
+                e.classList.add("hide");
+        }
+        // Children maybe
+        else {
+            // no common path
+            if (ex < xmin || ex >= xmax) {
+                e.classList.add("hide");
+            }
+            else {
+                zoom_child(e, xmin, width);
+                to_update_text.push(e);
+            }
+        }
+    }
+    update_text_for_elements(to_update_text);
+}
+function unzoom() {
+    unzoombtn.classList.add("hide");
+    var el = frames.children;
+    for(var i = 0; i < el.length; i++) {
+        el[i].classList.remove("parent");
+        el[i].classList.remove("hide");
+        zoom_reset(el[i]);
+    }
+    update_text_for_elements(el);
+}
+// search
+function reset_search() {
+    var el = document.querySelectorAll("#frames rect");
+    for (var i = 0; i < el.length; i++) {
+        orig_load(el[i], "fill")
+    }
+    var params = get_params();
+    delete params.s;
+    history.replaceState(null, null, parse_params(params));
+}
+function search_prompt() {
+    if (!searching) {
+        var term = prompt("Enter a search term (regexp " +
+            "allowed, eg: ^ext4_)", "");
+        if (term != null) {
+            search(term)
+        }
+    } else {
+        reset_search();
+        searching = 0;
+        searchbtn.classList.remove("show");
+        searchbtn.firstChild.nodeValue = "Search"
+        matchedtxt.classList.add("hide");
+        matchedtxt.firstChild.nodeValue = ""
+    }
+}
+function search(term) {
+    var re = new RegExp(term);
+    var el = frames.children;
+    var matches = new Object();
+    var maxwidth = 0;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        // Skip over frames which are either not visible, or below the zoomed-to frame
+        if (e.classList.contains("hide") || e.classList.contains("parent")) {
+            continue;
+        }
+        var func = g_to_func(e);
+        var rect = find_child(e, "rect");
+        if (func == null || rect == null)
+            continue;
+        // Save max width. Only works as we have a root frame
+        var w = parseInt(rect.attributes["fg:w"].value);
+        if (w > maxwidth)
+            maxwidth = w;
+        if (func.match(re)) {
+            // highlight
+            var x = parseInt(rect.attributes["fg:x"].value);
+            orig_save(rect, "fill");
+            rect.attributes.fill.value = searchcolor;
+            // remember matches
+            if (matches[x] == undefined) {
+                matches[x] = w;
+            } else {
+                if (w > matches[x]) {
+                    // overwrite with parent
+                    matches[x] = w;
+                }
+            }
+            searching = 1;
+        }
+    }
+    if (!searching)
+        return;
+    var params = get_params();
+    params.s = term;
+    history.replaceState(null, null, parse_params(params));
+
+    searchbtn.classList.add("show");
+    searchbtn.firstChild.nodeValue = "Reset Search";
+    // calculate percent matched, excluding vertical overlap
+    var count = 0;
+    var lastx = -1;
+    var lastw = 0;
+    var keys = Array();
+    for (k in matches) {
+        if (matches.hasOwnProperty(k))
+            keys.push(k);
+    }
+    // sort the matched frames by their x location
+    // ascending, then width descending
+    keys.sort(function(a, b){
+        return a - b;
+    });
+    // Step through frames saving only the biggest bottom-up frames
+    // thanks to the sort order. This relies on the tree property
+    // where children are always smaller than their parents.
+    for (var k in keys) {
+        var x = parseInt(keys[k]);
+        var w = matches[keys[k]];
+        if (x >= lastx + lastw) {
+            count += w;
+            lastx = x;
+            lastw = w;
+        }
+    }
+    // display matched percent
+    matchedtxt.classList.remove("hide");
+    var pct = 100 * count / maxwidth;
+    if (pct != 100) pct = pct.toFixed(1);
+    matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+}
+function format_percent(n) {
+    return n.toFixed(4) + "%";
+}
+]]></script><rect x="0" y="0" width="100%" height="358" fill="url(#background)"/><text id="title" fill="rgb(0,0,0)" x="50.0000%" y="24.00">Flame Graph</text><text id="details" fill="rgb(0,0,0)" x="10" y="341.00"> </text><text id="unzoom" class="hide" fill="rgb(0,0,0)" x="10" y="24.00">Reset Zoom</text><text id="search" fill="rgb(0,0,0)" x="1190" y="24.00">Search</text><text id="matched" fill="rgb(0,0,0)" x="1190" y="341.00"> </text><svg id="frames" x="10" width="1180" total_samples="6408"><g><title>libsystem_malloc.dylib`_free (3 samples, 0.05%)</title><rect x="0.0000%" y="197" width="0.0468%" height="15" fill="rgb(227,0,7)" fg:x="0" fg:w="3"/><text x="0.2500%" y="207.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (2 samples, 0.03%)</title><rect x="0.0468%" y="197" width="0.0312%" height="15" fill="rgb(217,0,24)" fg:x="3" fg:w="2"/><text x="0.2968%" y="207.50"></text></g><g><title>poker_sim`DYLD-STUB$$free (2 samples, 0.03%)</title><rect x="0.0780%" y="197" width="0.0312%" height="15" fill="rgb(221,193,54)" fg:x="5" fg:w="2"/><text x="0.3280%" y="207.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (4 samples, 0.06%)</title><rect x="0.1092%" y="197" width="0.0624%" height="15" fill="rgb(248,212,6)" fg:x="7" fg:w="4"/><text x="0.3592%" y="207.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::flop (1 samples, 0.02%)</title><rect x="0.1717%" y="197" width="0.0156%" height="15" fill="rgb(208,68,35)" fg:x="11" fg:w="1"/><text x="0.4217%" y="207.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::form_hand_strengths (2 samples, 0.03%)</title><rect x="0.1873%" y="197" width="0.0312%" height="15" fill="rgb(232,128,0)" fg:x="12" fg:w="2"/><text x="0.4373%" y="207.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::new (5 samples, 0.08%)</title><rect x="0.2185%" y="197" width="0.0780%" height="15" fill="rgb(207,160,47)" fg:x="14" fg:w="5"/><text x="0.4685%" y="207.50"></text></g><g><title>libsystem_malloc.dylib`_free (54 samples, 0.84%)</title><rect x="0.8115%" y="181" width="0.8427%" height="15" fill="rgb(228,23,34)" fg:x="52" fg:w="54"/><text x="1.0615%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (20 samples, 0.31%)</title><rect x="1.6542%" y="181" width="0.3121%" height="15" fill="rgb(218,30,26)" fg:x="106" fg:w="20"/><text x="1.9042%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (27 samples, 0.42%)</title><rect x="1.9663%" y="181" width="0.4213%" height="15" fill="rgb(220,122,19)" fg:x="126" fg:w="27"/><text x="2.2163%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`_szone_free (12 samples, 0.19%)</title><rect x="2.3876%" y="181" width="0.1873%" height="15" fill="rgb(250,228,42)" fg:x="153" fg:w="12"/><text x="2.6376%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`malloc (1 samples, 0.02%)</title><rect x="2.5749%" y="181" width="0.0156%" height="15" fill="rgb(240,193,28)" fg:x="165" fg:w="1"/><text x="2.8249%" y="191.50"></text></g><g><title>libsystem_platform.dylib`__bzero (1 samples, 0.02%)</title><rect x="2.5905%" y="181" width="0.0156%" height="15" fill="rgb(216,20,37)" fg:x="166" fg:w="1"/><text x="2.8405%" y="191.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (55 samples, 0.86%)</title><rect x="2.6061%" y="181" width="0.8583%" height="15" fill="rgb(206,188,39)" fg:x="167" fg:w="55"/><text x="2.8561%" y="191.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (2 samples, 0.03%)</title><rect x="3.4644%" y="181" width="0.0312%" height="15" fill="rgb(217,207,13)" fg:x="222" fg:w="2"/><text x="3.7144%" y="191.50"></text></g><g><title>poker_sim`&lt;rand_chacha::chacha::ChaCha12Core as rand_core::block::BlockRngCore&gt;::generate (612 samples, 9.55%)</title><rect x="3.4956%" y="181" width="9.5506%" height="15" fill="rgb(231,73,38)" fg:x="224" fg:w="612"/><text x="3.7456%" y="191.50">poker_sim`&lt;ran..</text></g><g><title>poker_sim`DYLD-STUB$$free (19 samples, 0.30%)</title><rect x="13.0462%" y="181" width="0.2965%" height="15" fill="rgb(225,20,46)" fg:x="836" fg:w="19"/><text x="13.2962%" y="191.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="13.3427%" y="181" width="0.0156%" height="15" fill="rgb(210,31,41)" fg:x="855" fg:w="1"/><text x="13.5927%" y="191.50"></text></g><g><title>poker_sim`__rdl_alloc (4 samples, 0.06%)</title><rect x="13.3583%" y="181" width="0.0624%" height="15" fill="rgb(221,200,47)" fg:x="856" fg:w="4"/><text x="13.6083%" y="191.50"></text></g><g><title>poker_sim`__rdl_dealloc (1 samples, 0.02%)</title><rect x="13.4207%" y="181" width="0.0156%" height="15" fill="rgb(226,26,5)" fg:x="860" fg:w="1"/><text x="13.6707%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (8 samples, 0.12%)</title><rect x="13.7328%" y="165" width="0.1248%" height="15" fill="rgb(249,33,26)" fg:x="880" fg:w="8"/><text x="13.9828%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (1 samples, 0.02%)</title><rect x="13.8577%" y="165" width="0.0156%" height="15" fill="rgb(235,183,28)" fg:x="888" fg:w="1"/><text x="14.1077%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (2 samples, 0.03%)</title><rect x="13.8733%" y="165" width="0.0312%" height="15" fill="rgb(221,5,38)" fg:x="889" fg:w="2"/><text x="14.1233%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$realloc (1 samples, 0.02%)</title><rect x="13.9045%" y="165" width="0.0156%" height="15" fill="rgb(247,18,42)" fg:x="891" fg:w="1"/><text x="14.1545%" y="175.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="13.9201%" y="165" width="0.0156%" height="15" fill="rgb(241,131,45)" fg:x="892" fg:w="1"/><text x="14.1701%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (2 samples, 0.03%)</title><rect x="14.0918%" y="149" width="0.0312%" height="15" fill="rgb(249,31,29)" fg:x="903" fg:w="2"/><text x="14.3418%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_memmove (1 samples, 0.02%)</title><rect x="14.4507%" y="117" width="0.0156%" height="15" fill="rgb(225,111,53)" fg:x="926" fg:w="1"/><text x="14.7007%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (3 samples, 0.05%)</title><rect x="14.4663%" y="117" width="0.0468%" height="15" fill="rgb(238,160,17)" fg:x="927" fg:w="3"/><text x="14.7163%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_pointer_size (13 samples, 0.20%)</title><rect x="14.5131%" y="117" width="0.2029%" height="15" fill="rgb(214,148,48)" fg:x="930" fg:w="13"/><text x="14.7631%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (3 samples, 0.05%)</title><rect x="14.7628%" y="101" width="0.0468%" height="15" fill="rgb(232,36,49)" fg:x="946" fg:w="3"/><text x="15.0128%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (12 samples, 0.19%)</title><rect x="14.8096%" y="101" width="0.1873%" height="15" fill="rgb(209,103,24)" fg:x="949" fg:w="12"/><text x="15.0596%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc (15 samples, 0.23%)</title><rect x="14.9969%" y="101" width="0.2341%" height="15" fill="rgb(229,88,8)" fg:x="961" fg:w="15"/><text x="15.2469%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (40 samples, 0.62%)</title><rect x="14.7160%" y="117" width="0.6242%" height="15" fill="rgb(213,181,19)" fg:x="943" fg:w="40"/><text x="14.9660%" y="127.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (7 samples, 0.11%)</title><rect x="15.2310%" y="101" width="0.1092%" height="15" fill="rgb(254,191,54)" fg:x="976" fg:w="7"/><text x="15.4810%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (69 samples, 1.08%)</title><rect x="14.2946%" y="133" width="1.0768%" height="15" fill="rgb(241,83,37)" fg:x="916" fg:w="69"/><text x="14.5446%" y="143.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (2 samples, 0.03%)</title><rect x="15.3402%" y="117" width="0.0312%" height="15" fill="rgb(233,36,39)" fg:x="983" fg:w="2"/><text x="15.5902%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (81 samples, 1.26%)</title><rect x="14.1230%" y="149" width="1.2640%" height="15" fill="rgb(226,3,54)" fg:x="905" fg:w="81"/><text x="14.3730%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (1 samples, 0.02%)</title><rect x="15.3714%" y="133" width="0.0156%" height="15" fill="rgb(245,192,40)" fg:x="985" fg:w="1"/><text x="15.6214%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (13 samples, 0.20%)</title><rect x="15.3870%" y="149" width="0.2029%" height="15" fill="rgb(238,167,29)" fg:x="986" fg:w="13"/><text x="15.6370%" y="159.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (142 samples, 2.22%)</title><rect x="13.4363%" y="181" width="2.2160%" height="15" fill="rgb(232,182,51)" fg:x="861" fg:w="142"/><text x="13.6863%" y="191.50">p..</text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (110 samples, 1.72%)</title><rect x="13.9357%" y="165" width="1.7166%" height="15" fill="rgb(231,60,39)" fg:x="893" fg:w="110"/><text x="14.1857%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_size (4 samples, 0.06%)</title><rect x="15.5899%" y="149" width="0.0624%" height="15" fill="rgb(208,69,12)" fg:x="999" fg:w="4"/><text x="15.8399%" y="159.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (2 samples, 0.03%)</title><rect x="15.6523%" y="181" width="0.0312%" height="15" fill="rgb(235,93,37)" fg:x="1003" fg:w="2"/><text x="15.9023%" y="191.50"></text></g><g><title>poker_sim`alloc::vec::Vec&lt;T,A&gt;::extend_with (1 samples, 0.02%)</title><rect x="15.6835%" y="181" width="0.0156%" height="15" fill="rgb(213,116,39)" fg:x="1005" fg:w="1"/><text x="15.9335%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (7 samples, 0.11%)</title><rect x="15.9176%" y="165" width="0.1092%" height="15" fill="rgb(222,207,29)" fg:x="1020" fg:w="7"/><text x="16.1676%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_memset (1 samples, 0.02%)</title><rect x="16.0268%" y="165" width="0.0156%" height="15" fill="rgb(206,96,30)" fg:x="1027" fg:w="1"/><text x="16.2768%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (99 samples, 1.54%)</title><rect x="16.0424%" y="165" width="1.5449%" height="15" fill="rgb(218,138,4)" fg:x="1028" fg:w="99"/><text x="16.2924%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_szone_free (12 samples, 0.19%)</title><rect x="17.5874%" y="165" width="0.1873%" height="15" fill="rgb(250,191,14)" fg:x="1127" fg:w="12"/><text x="17.8374%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`free_small (15 samples, 0.23%)</title><rect x="17.7747%" y="165" width="0.2341%" height="15" fill="rgb(239,60,40)" fg:x="1139" fg:w="15"/><text x="18.0247%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`get_tiny_previous_free_msize (1 samples, 0.02%)</title><rect x="18.3052%" y="149" width="0.0156%" height="15" fill="rgb(206,27,48)" fg:x="1173" fg:w="1"/><text x="18.5552%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_add_ptr (10 samples, 0.16%)</title><rect x="18.7266%" y="133" width="0.1561%" height="15" fill="rgb(225,35,8)" fg:x="1200" fg:w="10"/><text x="18.9766%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`free_tiny (57 samples, 0.89%)</title><rect x="18.0087%" y="165" width="0.8895%" height="15" fill="rgb(250,213,24)" fg:x="1154" fg:w="57"/><text x="18.2587%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_no_lock (37 samples, 0.58%)</title><rect x="18.3208%" y="149" width="0.5774%" height="15" fill="rgb(247,123,22)" fg:x="1174" fg:w="37"/><text x="18.5708%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_remove_ptr (1 samples, 0.02%)</title><rect x="18.8826%" y="133" width="0.0156%" height="15" fill="rgb(231,138,38)" fg:x="1210" fg:w="1"/><text x="19.1326%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_no_lock (3 samples, 0.05%)</title><rect x="18.8983%" y="165" width="0.0468%" height="15" fill="rgb(231,145,46)" fg:x="1211" fg:w="3"/><text x="19.1483%" y="175.50"></text></g><g><title>libsystem_platform.dylib`__bzero (4 samples, 0.06%)</title><rect x="18.9451%" y="165" width="0.0624%" height="15" fill="rgb(251,118,11)" fg:x="1214" fg:w="4"/><text x="19.1951%" y="175.50"></text></g><g><title>poker_sim`core::ptr::drop_in_place&lt;poker_sim::models::game_model::Game&gt; (255 samples, 3.98%)</title><rect x="15.6991%" y="181" width="3.9794%" height="15" fill="rgb(217,147,25)" fg:x="1006" fg:w="255"/><text x="15.9491%" y="191.50">poke..</text></g><g><title>libsystem_platform.dylib`_platform_memset (43 samples, 0.67%)</title><rect x="19.0075%" y="165" width="0.6710%" height="15" fill="rgb(247,81,37)" fg:x="1218" fg:w="43"/><text x="19.2575%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (9 samples, 0.14%)</title><rect x="19.8034%" y="149" width="0.1404%" height="15" fill="rgb(209,12,38)" fg:x="1269" fg:w="9"/><text x="20.0534%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (2 samples, 0.03%)</title><rect x="19.9438%" y="149" width="0.0312%" height="15" fill="rgb(227,1,9)" fg:x="1278" fg:w="2"/><text x="20.1938%" y="159.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="19.9750%" y="149" width="0.0156%" height="15" fill="rgb(248,47,43)" fg:x="1280" fg:w="1"/><text x="20.2250%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::flop (27 samples, 0.42%)</title><rect x="19.6785%" y="181" width="0.4213%" height="15" fill="rgb(221,10,30)" fg:x="1261" fg:w="27"/><text x="19.9285%" y="191.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (24 samples, 0.37%)</title><rect x="19.7253%" y="165" width="0.3745%" height="15" fill="rgb(210,229,1)" fg:x="1264" fg:w="24"/><text x="19.9753%" y="175.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (7 samples, 0.11%)</title><rect x="19.9906%" y="149" width="0.1092%" height="15" fill="rgb(222,148,37)" fg:x="1281" fg:w="7"/><text x="20.2406%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (5 samples, 0.08%)</title><rect x="20.0218%" y="133" width="0.0780%" height="15" fill="rgb(234,67,33)" fg:x="1283" fg:w="5"/><text x="20.2718%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_free (74 samples, 1.15%)</title><rect x="20.6461%" y="165" width="1.1548%" height="15" fill="rgb(247,98,35)" fg:x="1323" fg:w="74"/><text x="20.8961%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (51 samples, 0.80%)</title><rect x="21.8009%" y="165" width="0.7959%" height="15" fill="rgb(247,138,52)" fg:x="1397" fg:w="51"/><text x="22.0509%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (26 samples, 0.41%)</title><rect x="22.5968%" y="165" width="0.4057%" height="15" fill="rgb(213,79,30)" fg:x="1448" fg:w="26"/><text x="22.8468%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`malloc (1 samples, 0.02%)</title><rect x="23.0025%" y="165" width="0.0156%" height="15" fill="rgb(246,177,23)" fg:x="1474" fg:w="1"/><text x="23.2525%" y="175.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (36 samples, 0.56%)</title><rect x="23.0181%" y="165" width="0.5618%" height="15" fill="rgb(230,62,27)" fg:x="1475" fg:w="36"/><text x="23.2681%" y="175.50"></text></g><g><title>poker_sim`&lt;[V] as alloc::slice::Concat&lt;T&gt;&gt;::concat (11 samples, 0.17%)</title><rect x="23.5799%" y="165" width="0.1717%" height="15" fill="rgb(216,154,8)" fg:x="1511" fg:w="11"/><text x="23.8299%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$free (34 samples, 0.53%)</title><rect x="23.7516%" y="165" width="0.5306%" height="15" fill="rgb(244,35,45)" fg:x="1522" fg:w="34"/><text x="24.0016%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (9 samples, 0.14%)</title><rect x="24.2821%" y="165" width="0.1404%" height="15" fill="rgb(251,115,12)" fg:x="1556" fg:w="9"/><text x="24.5321%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$memcpy (4 samples, 0.06%)</title><rect x="24.4226%" y="165" width="0.0624%" height="15" fill="rgb(240,54,50)" fg:x="1565" fg:w="4"/><text x="24.6726%" y="175.50"></text></g><g><title>poker_sim`__rdl_alloc (8 samples, 0.12%)</title><rect x="24.4850%" y="165" width="0.1248%" height="15" fill="rgb(233,84,52)" fg:x="1569" fg:w="8"/><text x="24.7350%" y="175.50"></text></g><g><title>poker_sim`__rdl_dealloc (2 samples, 0.03%)</title><rect x="24.6099%" y="165" width="0.0312%" height="15" fill="rgb(207,117,47)" fg:x="1577" fg:w="2"/><text x="24.8599%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (7 samples, 0.11%)</title><rect x="24.9220%" y="149" width="0.1092%" height="15" fill="rgb(249,43,39)" fg:x="1597" fg:w="7"/><text x="25.1720%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (1 samples, 0.02%)</title><rect x="25.0312%" y="149" width="0.0156%" height="15" fill="rgb(209,38,44)" fg:x="1604" fg:w="1"/><text x="25.2812%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`szone_malloc_should_clear (1 samples, 0.02%)</title><rect x="25.0468%" y="149" width="0.0156%" height="15" fill="rgb(236,212,23)" fg:x="1605" fg:w="1"/><text x="25.2968%" y="159.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="25.0624%" y="149" width="0.0156%" height="15" fill="rgb(242,79,21)" fg:x="1606" fg:w="1"/><text x="25.3124%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (2 samples, 0.03%)</title><rect x="25.1561%" y="133" width="0.0312%" height="15" fill="rgb(211,96,35)" fg:x="1612" fg:w="2"/><text x="25.4061%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`rack_get_thread_index (8 samples, 0.12%)</title><rect x="25.2497%" y="117" width="0.1248%" height="15" fill="rgb(253,215,40)" fg:x="1618" fg:w="8"/><text x="25.4997%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_from_free_list (3 samples, 0.05%)</title><rect x="25.3745%" y="117" width="0.0468%" height="15" fill="rgb(211,81,21)" fg:x="1626" fg:w="3"/><text x="25.6245%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_tiny_check_and_zero_inline_meta_from_freelist (2 samples, 0.03%)</title><rect x="25.6086%" y="101" width="0.0312%" height="15" fill="rgb(208,190,38)" fg:x="1641" fg:w="2"/><text x="25.8586%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`set_tiny_meta_header_in_use (8 samples, 0.12%)</title><rect x="25.6398%" y="101" width="0.1248%" height="15" fill="rgb(235,213,38)" fg:x="1643" fg:w="8"/><text x="25.8898%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_tiny_check_and_zero_inline_meta_from_freelist (3 samples, 0.05%)</title><rect x="25.9988%" y="85" width="0.0468%" height="15" fill="rgb(237,122,38)" fg:x="1666" fg:w="3"/><text x="26.2488%" y="95.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (92 samples, 1.44%)</title><rect x="24.6411%" y="165" width="1.4357%" height="15" fill="rgb(244,218,35)" fg:x="1579" fg:w="92"/><text x="24.8911%" y="175.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (64 samples, 1.00%)</title><rect x="25.0780%" y="149" width="0.9988%" height="15" fill="rgb(240,68,47)" fg:x="1607" fg:w="64"/><text x="25.3280%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`szone_malloc_should_clear (57 samples, 0.89%)</title><rect x="25.1873%" y="133" width="0.8895%" height="15" fill="rgb(210,16,53)" fg:x="1614" fg:w="57"/><text x="25.4373%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_should_clear (42 samples, 0.66%)</title><rect x="25.4213%" y="117" width="0.6554%" height="15" fill="rgb(235,124,12)" fg:x="1629" fg:w="42"/><text x="25.6713%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_from_free_list (20 samples, 0.31%)</title><rect x="25.7647%" y="101" width="0.3121%" height="15" fill="rgb(224,169,11)" fg:x="1651" fg:w="20"/><text x="26.0147%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_add_ptr (2 samples, 0.03%)</title><rect x="26.0456%" y="85" width="0.0312%" height="15" fill="rgb(250,166,2)" fg:x="1669" fg:w="2"/><text x="26.2956%" y="95.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (1 samples, 0.02%)</title><rect x="26.0768%" y="165" width="0.0156%" height="15" fill="rgb(242,216,29)" fg:x="1671" fg:w="1"/><text x="26.3268%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (7 samples, 0.11%)</title><rect x="30.6492%" y="149" width="0.1092%" height="15" fill="rgb(230,116,27)" fg:x="1964" fg:w="7"/><text x="30.8992%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (19 samples, 0.30%)</title><rect x="30.7584%" y="149" width="0.2965%" height="15" fill="rgb(228,99,48)" fg:x="1971" fg:w="19"/><text x="31.0084%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (85 samples, 1.33%)</title><rect x="31.0549%" y="149" width="1.3265%" height="15" fill="rgb(253,11,6)" fg:x="1990" fg:w="85"/><text x="31.3049%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (37 samples, 0.58%)</title><rect x="32.3814%" y="149" width="0.5774%" height="15" fill="rgb(247,143,39)" fg:x="2075" fg:w="37"/><text x="32.6314%" y="159.50"></text></g><g><title>libsystem_platform.dylib`__bzero (9 samples, 0.14%)</title><rect x="32.9588%" y="149" width="0.1404%" height="15" fill="rgb(236,97,10)" fg:x="2112" fg:w="9"/><text x="33.2088%" y="159.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (25 samples, 0.39%)</title><rect x="33.0993%" y="149" width="0.3901%" height="15" fill="rgb(233,208,19)" fg:x="2121" fg:w="25"/><text x="33.3493%" y="159.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (6 samples, 0.09%)</title><rect x="33.4894%" y="149" width="0.0936%" height="15" fill="rgb(216,164,2)" fg:x="2146" fg:w="6"/><text x="33.7394%" y="159.50"></text></g><g><title>poker_sim`&lt;[V] as alloc::slice::Concat&lt;T&gt;&gt;::concat (67 samples, 1.05%)</title><rect x="33.5830%" y="149" width="1.0456%" height="15" fill="rgb(220,129,5)" fg:x="2152" fg:w="67"/><text x="33.8330%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (23 samples, 0.36%)</title><rect x="34.2697%" y="133" width="0.3589%" height="15" fill="rgb(242,17,10)" fg:x="2196" fg:w="23"/><text x="34.5197%" y="143.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (4 samples, 0.06%)</title><rect x="34.6286%" y="149" width="0.0624%" height="15" fill="rgb(242,107,0)" fg:x="2219" fg:w="4"/><text x="34.8786%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$memcpy (5 samples, 0.08%)</title><rect x="34.6910%" y="149" width="0.0780%" height="15" fill="rgb(251,28,31)" fg:x="2223" fg:w="5"/><text x="34.9410%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::form_seven_cards (558 samples, 8.71%)</title><rect x="26.0924%" y="165" width="8.7079%" height="15" fill="rgb(233,223,10)" fg:x="1672" fg:w="558"/><text x="26.3424%" y="175.50">poker_sim`po..</text></g><g><title>poker_sim`__rdl_alloc (2 samples, 0.03%)</title><rect x="34.7690%" y="149" width="0.0312%" height="15" fill="rgb(215,21,27)" fg:x="2228" fg:w="2"/><text x="35.0190%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::add_aces_top (2 samples, 0.03%)</title><rect x="34.8002%" y="165" width="0.0312%" height="15" fill="rgb(232,23,21)" fg:x="2230" fg:w="2"/><text x="35.0502%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (11 samples, 0.17%)</title><rect x="40.4806%" y="149" width="0.1717%" height="15" fill="rgb(244,5,23)" fg:x="2594" fg:w="11"/><text x="40.7306%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_free (4 samples, 0.06%)</title><rect x="40.6523%" y="149" width="0.0624%" height="15" fill="rgb(226,81,46)" fg:x="2605" fg:w="4"/><text x="40.9023%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (84 samples, 1.31%)</title><rect x="40.7147%" y="149" width="1.3109%" height="15" fill="rgb(247,70,30)" fg:x="2609" fg:w="84"/><text x="40.9647%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (11 samples, 0.17%)</title><rect x="42.0256%" y="149" width="0.1717%" height="15" fill="rgb(212,68,19)" fg:x="2693" fg:w="11"/><text x="42.2756%" y="159.50"></text></g><g><title>libsystem_platform.dylib`__bzero (6 samples, 0.09%)</title><rect x="42.1973%" y="149" width="0.0936%" height="15" fill="rgb(240,187,13)" fg:x="2704" fg:w="6"/><text x="42.4473%" y="159.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (16 samples, 0.25%)</title><rect x="42.2909%" y="149" width="0.2497%" height="15" fill="rgb(223,113,26)" fg:x="2710" fg:w="16"/><text x="42.5409%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$free (3 samples, 0.05%)</title><rect x="42.5406%" y="149" width="0.0468%" height="15" fill="rgb(206,192,2)" fg:x="2726" fg:w="3"/><text x="42.7906%" y="159.50"></text></g><g><title>poker_sim`__rdl_dealloc (1 samples, 0.02%)</title><rect x="42.5874%" y="149" width="0.0156%" height="15" fill="rgb(241,108,4)" fg:x="2729" fg:w="1"/><text x="42.8374%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (25 samples, 0.39%)</title><rect x="42.8527%" y="133" width="0.3901%" height="15" fill="rgb(247,173,49)" fg:x="2746" fg:w="25"/><text x="43.1027%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (1 samples, 0.02%)</title><rect x="43.2428%" y="133" width="0.0156%" height="15" fill="rgb(224,114,35)" fg:x="2771" fg:w="1"/><text x="43.4928%" y="143.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (6 samples, 0.09%)</title><rect x="43.2584%" y="133" width="0.0936%" height="15" fill="rgb(245,159,27)" fg:x="2772" fg:w="6"/><text x="43.5084%" y="143.50"></text></g><g><title>poker_sim`DYLD-STUB$$realloc (1 samples, 0.02%)</title><rect x="43.3521%" y="133" width="0.0156%" height="15" fill="rgb(245,172,44)" fg:x="2778" fg:w="1"/><text x="43.6021%" y="143.50"></text></g><g><title>poker_sim`__rdl_alloc (2 samples, 0.03%)</title><rect x="43.3677%" y="133" width="0.0312%" height="15" fill="rgb(236,23,11)" fg:x="2779" fg:w="2"/><text x="43.6177%" y="143.50"></text></g><g><title>poker_sim`__rdl_realloc (3 samples, 0.05%)</title><rect x="43.3989%" y="133" width="0.0468%" height="15" fill="rgb(205,117,38)" fg:x="2781" fg:w="3"/><text x="43.6489%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (4 samples, 0.06%)</title><rect x="43.8670%" y="85" width="0.0624%" height="15" fill="rgb(237,72,25)" fg:x="2811" fg:w="4"/><text x="44.1170%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_pointer_size (5 samples, 0.08%)</title><rect x="43.9295%" y="85" width="0.0780%" height="15" fill="rgb(244,70,9)" fg:x="2815" fg:w="5"/><text x="44.1795%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (2 samples, 0.03%)</title><rect x="44.0543%" y="69" width="0.0312%" height="15" fill="rgb(217,125,39)" fg:x="2823" fg:w="2"/><text x="44.3043%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (18 samples, 0.28%)</title><rect x="44.0855%" y="69" width="0.2809%" height="15" fill="rgb(235,36,10)" fg:x="2825" fg:w="18"/><text x="44.3355%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc (12 samples, 0.19%)</title><rect x="44.3664%" y="69" width="0.1873%" height="15" fill="rgb(251,123,47)" fg:x="2843" fg:w="12"/><text x="44.6164%" y="79.50"></text></g><g><title>libsystem_platform.dylib`__bzero (1 samples, 0.02%)</title><rect x="44.5537%" y="69" width="0.0156%" height="15" fill="rgb(221,13,13)" fg:x="2855" fg:w="1"/><text x="44.8037%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (37 samples, 0.58%)</title><rect x="44.0075%" y="85" width="0.5774%" height="15" fill="rgb(238,131,9)" fg:x="2820" fg:w="37"/><text x="44.2575%" y="95.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (1 samples, 0.02%)</title><rect x="44.5693%" y="69" width="0.0156%" height="15" fill="rgb(211,50,8)" fg:x="2856" fg:w="1"/><text x="44.8193%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (59 samples, 0.92%)</title><rect x="43.6954%" y="101" width="0.9207%" height="15" fill="rgb(245,182,24)" fg:x="2800" fg:w="59"/><text x="43.9454%" y="111.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (2 samples, 0.03%)</title><rect x="44.5849%" y="85" width="0.0312%" height="15" fill="rgb(242,14,37)" fg:x="2857" fg:w="2"/><text x="44.8349%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (69 samples, 1.08%)</title><rect x="43.6017%" y="117" width="1.0768%" height="15" fill="rgb(246,228,12)" fg:x="2794" fg:w="69"/><text x="43.8517%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (4 samples, 0.06%)</title><rect x="44.6161%" y="101" width="0.0624%" height="15" fill="rgb(213,55,15)" fg:x="2859" fg:w="4"/><text x="44.8661%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (41 samples, 0.64%)</title><rect x="44.6785%" y="117" width="0.6398%" height="15" fill="rgb(209,9,3)" fg:x="2863" fg:w="41"/><text x="44.9285%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (180 samples, 2.81%)</title><rect x="42.6030%" y="149" width="2.8090%" height="15" fill="rgb(230,59,30)" fg:x="2730" fg:w="180"/><text x="42.8530%" y="159.50">po..</text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (126 samples, 1.97%)</title><rect x="43.4457%" y="133" width="1.9663%" height="15" fill="rgb(209,121,21)" fg:x="2784" fg:w="126"/><text x="43.6957%" y="143.50">p..</text></g><g><title>libsystem_malloc.dylib`nanov2_size (6 samples, 0.09%)</title><rect x="45.3184%" y="117" width="0.0936%" height="15" fill="rgb(220,109,13)" fg:x="2904" fg:w="6"/><text x="45.5684%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (2 samples, 0.03%)</title><rect x="45.4120%" y="149" width="0.0312%" height="15" fill="rgb(232,18,1)" fg:x="2910" fg:w="2"/><text x="45.6620%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::add_aces_top (4 samples, 0.06%)</title><rect x="45.4432%" y="149" width="0.0624%" height="15" fill="rgb(215,41,42)" fg:x="2912" fg:w="4"/><text x="45.6932%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (6 samples, 0.09%)</title><rect x="45.5056%" y="133" width="0.0936%" height="15" fill="rgb(224,123,36)" fg:x="2916" fg:w="6"/><text x="45.7556%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (3 samples, 0.05%)</title><rect x="45.9894%" y="101" width="0.0468%" height="15" fill="rgb(240,125,3)" fg:x="2947" fg:w="3"/><text x="46.2394%" y="111.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="46.0362%" y="101" width="0.0156%" height="15" fill="rgb(205,98,50)" fg:x="2950" fg:w="1"/><text x="46.2862%" y="111.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="46.0518%" y="101" width="0.0156%" height="15" fill="rgb(205,185,37)" fg:x="2951" fg:w="1"/><text x="46.3018%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_pair (37 samples, 0.58%)</title><rect x="45.5056%" y="149" width="0.5774%" height="15" fill="rgb(238,207,15)" fg:x="2916" fg:w="37"/><text x="45.7556%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (31 samples, 0.48%)</title><rect x="45.5993%" y="133" width="0.4838%" height="15" fill="rgb(213,199,42)" fg:x="2922" fg:w="31"/><text x="45.8493%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (7 samples, 0.11%)</title><rect x="45.9738%" y="117" width="0.1092%" height="15" fill="rgb(235,201,11)" fg:x="2946" fg:w="7"/><text x="46.2238%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (1 samples, 0.02%)</title><rect x="46.0674%" y="101" width="0.0156%" height="15" fill="rgb(207,46,11)" fg:x="2952" fg:w="1"/><text x="46.3174%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (1 samples, 0.02%)</title><rect x="46.1142%" y="133" width="0.0156%" height="15" fill="rgb(241,35,35)" fg:x="2955" fg:w="1"/><text x="46.3642%" y="143.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_set (57 samples, 0.89%)</title><rect x="46.0830%" y="149" width="0.8895%" height="15" fill="rgb(243,32,47)" fg:x="2953" fg:w="57"/><text x="46.3330%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (54 samples, 0.84%)</title><rect x="46.1298%" y="133" width="0.8427%" height="15" fill="rgb(247,202,23)" fg:x="2956" fg:w="54"/><text x="46.3798%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (1 samples, 0.02%)</title><rect x="46.9569%" y="117" width="0.0156%" height="15" fill="rgb(219,102,11)" fg:x="3009" fg:w="1"/><text x="47.2069%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (1 samples, 0.02%)</title><rect x="46.9569%" y="101" width="0.0156%" height="15" fill="rgb(243,110,44)" fg:x="3009" fg:w="1"/><text x="47.2069%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (15 samples, 0.23%)</title><rect x="47.0662%" y="133" width="0.2341%" height="15" fill="rgb(222,74,54)" fg:x="3016" fg:w="15"/><text x="47.3162%" y="143.50"></text></g><g><title>libsystem_platform.dylib`__bzero (1 samples, 0.02%)</title><rect x="47.3002%" y="133" width="0.0156%" height="15" fill="rgb(216,99,12)" fg:x="3031" fg:w="1"/><text x="47.5502%" y="143.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (1 samples, 0.02%)</title><rect x="47.3159%" y="133" width="0.0156%" height="15" fill="rgb(226,22,26)" fg:x="3032" fg:w="1"/><text x="47.5659%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (2 samples, 0.03%)</title><rect x="47.3627%" y="117" width="0.0312%" height="15" fill="rgb(217,163,10)" fg:x="3035" fg:w="2"/><text x="47.6127%" y="127.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="47.3939%" y="117" width="0.0156%" height="15" fill="rgb(213,25,53)" fg:x="3037" fg:w="1"/><text x="47.6439%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (10 samples, 0.16%)</title><rect x="47.3315%" y="133" width="0.1561%" height="15" fill="rgb(252,105,26)" fg:x="3033" fg:w="10"/><text x="47.5815%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (5 samples, 0.08%)</title><rect x="47.4095%" y="117" width="0.0780%" height="15" fill="rgb(220,39,43)" fg:x="3038" fg:w="5"/><text x="47.6595%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (5 samples, 0.08%)</title><rect x="47.4095%" y="101" width="0.0780%" height="15" fill="rgb(229,68,48)" fg:x="3038" fg:w="5"/><text x="47.6595%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (7 samples, 0.11%)</title><rect x="48.4395%" y="101" width="0.1092%" height="15" fill="rgb(252,8,32)" fg:x="3104" fg:w="7"/><text x="48.6895%" y="111.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (2 samples, 0.03%)</title><rect x="48.5487%" y="101" width="0.0312%" height="15" fill="rgb(223,20,43)" fg:x="3111" fg:w="2"/><text x="48.7987%" y="111.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="48.5799%" y="101" width="0.0156%" height="15" fill="rgb(229,81,49)" fg:x="3113" fg:w="1"/><text x="48.8299%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_two_pair (116 samples, 1.81%)</title><rect x="46.9725%" y="149" width="1.8102%" height="15" fill="rgb(236,28,36)" fg:x="3010" fg:w="116"/><text x="47.2225%" y="159.50">p..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (83 samples, 1.30%)</title><rect x="47.4875%" y="133" width="1.2953%" height="15" fill="rgb(249,185,26)" fg:x="3043" fg:w="83"/><text x="47.7375%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (25 samples, 0.39%)</title><rect x="48.3926%" y="117" width="0.3901%" height="15" fill="rgb(249,174,33)" fg:x="3101" fg:w="25"/><text x="48.6426%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (12 samples, 0.19%)</title><rect x="48.5955%" y="101" width="0.1873%" height="15" fill="rgb(233,201,37)" fg:x="3114" fg:w="12"/><text x="48.8455%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (7 samples, 0.11%)</title><rect x="48.6735%" y="85" width="0.1092%" height="15" fill="rgb(221,78,26)" fg:x="3119" fg:w="7"/><text x="48.9235%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (10 samples, 0.16%)</title><rect x="49.8908%" y="117" width="0.1561%" height="15" fill="rgb(250,127,30)" fg:x="3197" fg:w="10"/><text x="50.1408%" y="127.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (91 samples, 1.42%)</title><rect x="48.7828%" y="149" width="1.4201%" height="15" fill="rgb(230,49,44)" fg:x="3126" fg:w="91"/><text x="49.0328%" y="159.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (27 samples, 0.42%)</title><rect x="49.7815%" y="133" width="0.4213%" height="15" fill="rgb(229,67,23)" fg:x="3190" fg:w="27"/><text x="50.0315%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (10 samples, 0.16%)</title><rect x="50.0468%" y="117" width="0.1561%" height="15" fill="rgb(249,83,47)" fg:x="3207" fg:w="10"/><text x="50.2968%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (8 samples, 0.12%)</title><rect x="50.0780%" y="101" width="0.1248%" height="15" fill="rgb(215,43,3)" fg:x="3209" fg:w="8"/><text x="50.3280%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::remove_aces_top (2 samples, 0.03%)</title><rect x="50.2029%" y="149" width="0.0312%" height="15" fill="rgb(238,154,13)" fg:x="3217" fg:w="2"/><text x="50.4529%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="51.0612%" y="117" width="0.0156%" height="15" fill="rgb(219,56,2)" fg:x="3272" fg:w="1"/><text x="51.3112%" y="127.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_five_combo (1,046 samples, 16.32%)</title><rect x="34.8315%" y="165" width="16.3233%" height="15" fill="rgb(233,0,4)" fg:x="2232" fg:w="1046"/><text x="35.0815%" y="175.50">poker_sim`poker_sim::mode..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (59 samples, 0.92%)</title><rect x="50.2341%" y="149" width="0.9207%" height="15" fill="rgb(235,30,7)" fg:x="3219" fg:w="59"/><text x="50.4841%" y="159.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (7 samples, 0.11%)</title><rect x="51.0456%" y="133" width="0.1092%" height="15" fill="rgb(250,79,13)" fg:x="3271" fg:w="7"/><text x="51.2956%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (5 samples, 0.08%)</title><rect x="51.0768%" y="117" width="0.0780%" height="15" fill="rgb(211,146,34)" fg:x="3273" fg:w="5"/><text x="51.3268%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (3 samples, 0.05%)</title><rect x="51.1080%" y="101" width="0.0468%" height="15" fill="rgb(228,22,38)" fg:x="3275" fg:w="3"/><text x="51.3580%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_pair (1 samples, 0.02%)</title><rect x="51.1548%" y="165" width="0.0156%" height="15" fill="rgb(235,168,5)" fg:x="3278" fg:w="1"/><text x="51.4048%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_set (1 samples, 0.02%)</title><rect x="51.1704%" y="165" width="0.0156%" height="15" fill="rgb(221,155,16)" fg:x="3279" fg:w="1"/><text x="51.4204%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_two_pair (2 samples, 0.03%)</title><rect x="51.1860%" y="165" width="0.0312%" height="15" fill="rgb(215,215,53)" fg:x="3280" fg:w="2"/><text x="51.4360%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (2 samples, 0.03%)</title><rect x="51.2172%" y="165" width="0.0312%" height="15" fill="rgb(223,4,10)" fg:x="3282" fg:w="2"/><text x="51.4672%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::form_hand_strengths (1,998 samples, 31.18%)</title><rect x="20.0999%" y="181" width="31.1798%" height="15" fill="rgb(234,103,6)" fg:x="1288" fg:w="1998"/><text x="20.3499%" y="191.50">poker_sim`poker_sim::models::game_model::Game::for..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (2 samples, 0.03%)</title><rect x="51.2484%" y="165" width="0.0312%" height="15" fill="rgb(227,97,0)" fg:x="3284" fg:w="2"/><text x="51.4984%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::form_seven_cards (9 samples, 0.14%)</title><rect x="51.2797%" y="181" width="0.1404%" height="15" fill="rgb(234,150,53)" fg:x="3286" fg:w="9"/><text x="51.5297%" y="191.50"></text></g><g><title>libsystem_malloc.dylib`_free (63 samples, 0.98%)</title><rect x="52.2004%" y="165" width="0.9831%" height="15" fill="rgb(228,201,54)" fg:x="3345" fg:w="63"/><text x="52.4504%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (11 samples, 0.17%)</title><rect x="53.1835%" y="165" width="0.1717%" height="15" fill="rgb(222,22,37)" fg:x="3408" fg:w="11"/><text x="53.4335%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (18 samples, 0.28%)</title><rect x="53.3552%" y="165" width="0.2809%" height="15" fill="rgb(237,53,32)" fg:x="3419" fg:w="18"/><text x="53.6052%" y="175.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (1 samples, 0.02%)</title><rect x="53.6361%" y="165" width="0.0156%" height="15" fill="rgb(233,25,53)" fg:x="3437" fg:w="1"/><text x="53.8861%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$free (15 samples, 0.23%)</title><rect x="53.6517%" y="165" width="0.2341%" height="15" fill="rgb(210,40,34)" fg:x="3438" fg:w="15"/><text x="53.9017%" y="175.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (2 samples, 0.03%)</title><rect x="53.8858%" y="165" width="0.0312%" height="15" fill="rgb(241,220,44)" fg:x="3453" fg:w="2"/><text x="54.1358%" y="175.50"></text></g><g><title>poker_sim`__rdl_alloc (5 samples, 0.08%)</title><rect x="53.9170%" y="165" width="0.0780%" height="15" fill="rgb(235,28,35)" fg:x="3455" fg:w="5"/><text x="54.1670%" y="175.50"></text></g><g><title>poker_sim`__rdl_dealloc (1 samples, 0.02%)</title><rect x="53.9950%" y="165" width="0.0156%" height="15" fill="rgb(210,56,17)" fg:x="3460" fg:w="1"/><text x="54.2450%" y="175.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (11 samples, 0.17%)</title><rect x="54.0106%" y="165" width="0.1717%" height="15" fill="rgb(224,130,29)" fg:x="3461" fg:w="11"/><text x="54.2606%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::add_aces_top (3 samples, 0.05%)</title><rect x="54.1823%" y="165" width="0.0468%" height="15" fill="rgb(235,212,8)" fg:x="3472" fg:w="3"/><text x="54.4323%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (5 samples, 0.08%)</title><rect x="63.4207%" y="149" width="0.0780%" height="15" fill="rgb(223,33,50)" fg:x="4064" fg:w="5"/><text x="63.6707%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_free (17 samples, 0.27%)</title><rect x="63.4988%" y="149" width="0.2653%" height="15" fill="rgb(219,149,13)" fg:x="4069" fg:w="17"/><text x="63.7488%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (108 samples, 1.69%)</title><rect x="63.7640%" y="149" width="1.6854%" height="15" fill="rgb(250,156,29)" fg:x="4086" fg:w="108"/><text x="64.0140%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (11 samples, 0.17%)</title><rect x="65.4494%" y="149" width="0.1717%" height="15" fill="rgb(216,193,19)" fg:x="4194" fg:w="11"/><text x="65.6994%" y="159.50"></text></g><g><title>libsystem_platform.dylib`__bzero (8 samples, 0.12%)</title><rect x="65.6211%" y="149" width="0.1248%" height="15" fill="rgb(216,135,14)" fg:x="4205" fg:w="8"/><text x="65.8711%" y="159.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (16 samples, 0.25%)</title><rect x="65.7459%" y="149" width="0.2497%" height="15" fill="rgb(241,47,5)" fg:x="4213" fg:w="16"/><text x="65.9959%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$free (4 samples, 0.06%)</title><rect x="65.9956%" y="149" width="0.0624%" height="15" fill="rgb(233,42,35)" fg:x="4229" fg:w="4"/><text x="66.2456%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (36 samples, 0.56%)</title><rect x="66.4170%" y="133" width="0.5618%" height="15" fill="rgb(231,13,6)" fg:x="4256" fg:w="36"/><text x="66.6670%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (2 samples, 0.03%)</title><rect x="66.9788%" y="133" width="0.0312%" height="15" fill="rgb(207,181,40)" fg:x="4292" fg:w="2"/><text x="67.2288%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`malloc (1 samples, 0.02%)</title><rect x="67.0100%" y="133" width="0.0156%" height="15" fill="rgb(254,173,49)" fg:x="4294" fg:w="1"/><text x="67.2600%" y="143.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (7 samples, 0.11%)</title><rect x="67.0256%" y="133" width="0.1092%" height="15" fill="rgb(221,1,38)" fg:x="4295" fg:w="7"/><text x="67.2756%" y="143.50"></text></g><g><title>poker_sim`__rdl_alloc (3 samples, 0.05%)</title><rect x="67.1348%" y="133" width="0.0468%" height="15" fill="rgb(206,124,46)" fg:x="4302" fg:w="3"/><text x="67.3848%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (1 samples, 0.02%)</title><rect x="67.6498%" y="85" width="0.0156%" height="15" fill="rgb(249,21,11)" fg:x="4335" fg:w="1"/><text x="67.8998%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_pointer_size (6 samples, 0.09%)</title><rect x="67.6654%" y="85" width="0.0936%" height="15" fill="rgb(222,201,40)" fg:x="4336" fg:w="6"/><text x="67.9154%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (9 samples, 0.14%)</title><rect x="67.7747%" y="69" width="0.1404%" height="15" fill="rgb(235,61,29)" fg:x="4343" fg:w="9"/><text x="68.0247%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (15 samples, 0.23%)</title><rect x="67.7591%" y="85" width="0.2341%" height="15" fill="rgb(219,207,3)" fg:x="4342" fg:w="15"/><text x="68.0091%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc (5 samples, 0.08%)</title><rect x="67.9151%" y="69" width="0.0780%" height="15" fill="rgb(222,56,46)" fg:x="4352" fg:w="5"/><text x="68.1651%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (35 samples, 0.55%)</title><rect x="67.4782%" y="117" width="0.5462%" height="15" fill="rgb(239,76,54)" fg:x="4324" fg:w="35"/><text x="67.7282%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (30 samples, 0.47%)</title><rect x="67.5562%" y="101" width="0.4682%" height="15" fill="rgb(231,124,27)" fg:x="4329" fg:w="30"/><text x="67.8062%" y="111.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (2 samples, 0.03%)</title><rect x="67.9931%" y="85" width="0.0312%" height="15" fill="rgb(249,195,6)" fg:x="4357" fg:w="2"/><text x="68.2431%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (79 samples, 1.23%)</title><rect x="68.0243%" y="117" width="1.2328%" height="15" fill="rgb(237,174,47)" fg:x="4359" fg:w="79"/><text x="68.2743%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (207 samples, 3.23%)</title><rect x="66.0581%" y="149" width="3.2303%" height="15" fill="rgb(206,201,31)" fg:x="4233" fg:w="207"/><text x="66.3081%" y="159.50">pok..</text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (135 samples, 2.11%)</title><rect x="67.1816%" y="133" width="2.1067%" height="15" fill="rgb(231,57,52)" fg:x="4305" fg:w="135"/><text x="67.4316%" y="143.50">p..</text></g><g><title>libsystem_malloc.dylib`nanov2_size (2 samples, 0.03%)</title><rect x="69.2572%" y="117" width="0.0312%" height="15" fill="rgb(248,177,22)" fg:x="4438" fg:w="2"/><text x="69.5072%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (1 samples, 0.02%)</title><rect x="69.2884%" y="149" width="0.0156%" height="15" fill="rgb(215,211,37)" fg:x="4440" fg:w="1"/><text x="69.5384%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::add_aces_top (21 samples, 0.33%)</title><rect x="69.3040%" y="149" width="0.3277%" height="15" fill="rgb(241,128,51)" fg:x="4441" fg:w="21"/><text x="69.5540%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (1 samples, 0.02%)</title><rect x="69.6317%" y="133" width="0.0156%" height="15" fill="rgb(227,165,31)" fg:x="4462" fg:w="1"/><text x="69.8817%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (13 samples, 0.20%)</title><rect x="69.6473%" y="133" width="0.2029%" height="15" fill="rgb(228,167,24)" fg:x="4463" fg:w="13"/><text x="69.8973%" y="143.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (4 samples, 0.06%)</title><rect x="69.8502%" y="133" width="0.0624%" height="15" fill="rgb(228,143,12)" fg:x="4476" fg:w="4"/><text x="70.1002%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (5 samples, 0.08%)</title><rect x="70.6305%" y="101" width="0.0780%" height="15" fill="rgb(249,149,8)" fg:x="4526" fg:w="5"/><text x="70.8805%" y="111.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="70.7085%" y="101" width="0.0156%" height="15" fill="rgb(243,35,44)" fg:x="4531" fg:w="1"/><text x="70.9585%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_pair (77 samples, 1.20%)</title><rect x="69.6317%" y="149" width="1.2016%" height="15" fill="rgb(246,89,9)" fg:x="4462" fg:w="77"/><text x="69.8817%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (59 samples, 0.92%)</title><rect x="69.9126%" y="133" width="0.9207%" height="15" fill="rgb(233,213,13)" fg:x="4480" fg:w="59"/><text x="70.1626%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (16 samples, 0.25%)</title><rect x="70.5836%" y="117" width="0.2497%" height="15" fill="rgb(233,141,41)" fg:x="4523" fg:w="16"/><text x="70.8336%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (7 samples, 0.11%)</title><rect x="70.7241%" y="101" width="0.1092%" height="15" fill="rgb(239,167,4)" fg:x="4532" fg:w="7"/><text x="70.9741%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (4 samples, 0.06%)</title><rect x="70.7709%" y="85" width="0.0624%" height="15" fill="rgb(209,217,16)" fg:x="4535" fg:w="4"/><text x="71.0209%" y="95.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_set (75 samples, 1.17%)</title><rect x="70.8333%" y="149" width="1.1704%" height="15" fill="rgb(219,88,35)" fg:x="4539" fg:w="75"/><text x="71.0833%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (74 samples, 1.15%)</title><rect x="70.8489%" y="133" width="1.1548%" height="15" fill="rgb(220,193,23)" fg:x="4540" fg:w="74"/><text x="71.0989%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (2 samples, 0.03%)</title><rect x="71.9725%" y="117" width="0.0312%" height="15" fill="rgb(230,90,52)" fg:x="4612" fg:w="2"/><text x="72.2225%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (2 samples, 0.03%)</title><rect x="71.9725%" y="101" width="0.0312%" height="15" fill="rgb(252,106,19)" fg:x="4612" fg:w="2"/><text x="72.2225%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (1 samples, 0.02%)</title><rect x="71.9881%" y="85" width="0.0156%" height="15" fill="rgb(206,74,20)" fg:x="4613" fg:w="1"/><text x="72.2381%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (1 samples, 0.02%)</title><rect x="72.0974%" y="133" width="0.0156%" height="15" fill="rgb(230,138,44)" fg:x="4620" fg:w="1"/><text x="72.3474%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (28 samples, 0.44%)</title><rect x="72.1130%" y="133" width="0.4370%" height="15" fill="rgb(235,182,43)" fg:x="4621" fg:w="28"/><text x="72.3630%" y="143.50"></text></g><g><title>libsystem_platform.dylib`_platform_memset (6 samples, 0.09%)</title><rect x="72.5499%" y="133" width="0.0936%" height="15" fill="rgb(242,16,51)" fg:x="4649" fg:w="6"/><text x="72.7999%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (7 samples, 0.11%)</title><rect x="72.6748%" y="117" width="0.1092%" height="15" fill="rgb(248,9,4)" fg:x="4657" fg:w="7"/><text x="72.9248%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (13 samples, 0.20%)</title><rect x="72.6436%" y="133" width="0.2029%" height="15" fill="rgb(210,31,22)" fg:x="4655" fg:w="13"/><text x="72.8936%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (4 samples, 0.06%)</title><rect x="72.7840%" y="117" width="0.0624%" height="15" fill="rgb(239,54,39)" fg:x="4664" fg:w="4"/><text x="73.0340%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (2 samples, 0.03%)</title><rect x="72.8152%" y="101" width="0.0312%" height="15" fill="rgb(230,99,41)" fg:x="4666" fg:w="2"/><text x="73.0652%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (3 samples, 0.05%)</title><rect x="74.1573%" y="101" width="0.0468%" height="15" fill="rgb(253,106,12)" fg:x="4752" fg:w="3"/><text x="74.4073%" y="111.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="74.2041%" y="101" width="0.0156%" height="15" fill="rgb(213,46,41)" fg:x="4755" fg:w="1"/><text x="74.4541%" y="111.50"></text></g><g><title>poker_sim`__rdl_alloc (1 samples, 0.02%)</title><rect x="74.2197%" y="101" width="0.0156%" height="15" fill="rgb(215,133,35)" fg:x="4756" fg:w="1"/><text x="74.4697%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_two_pair (153 samples, 2.39%)</title><rect x="72.0037%" y="149" width="2.3876%" height="15" fill="rgb(213,28,5)" fg:x="4614" fg:w="153"/><text x="72.2537%" y="159.50">po..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (99 samples, 1.54%)</title><rect x="72.8464%" y="133" width="1.5449%" height="15" fill="rgb(215,77,49)" fg:x="4668" fg:w="99"/><text x="73.0964%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (24 samples, 0.37%)</title><rect x="74.0169%" y="117" width="0.3745%" height="15" fill="rgb(248,100,22)" fg:x="4743" fg:w="24"/><text x="74.2669%" y="127.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (10 samples, 0.16%)</title><rect x="74.2353%" y="101" width="0.1561%" height="15" fill="rgb(208,67,9)" fg:x="4757" fg:w="10"/><text x="74.4853%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (5 samples, 0.08%)</title><rect x="74.3134%" y="85" width="0.0780%" height="15" fill="rgb(219,133,21)" fg:x="4762" fg:w="5"/><text x="74.5634%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (6 samples, 0.09%)</title><rect x="75.9363%" y="117" width="0.0936%" height="15" fill="rgb(246,46,29)" fg:x="4866" fg:w="6"/><text x="76.1863%" y="127.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (2 samples, 0.03%)</title><rect x="76.0300%" y="117" width="0.0312%" height="15" fill="rgb(246,185,52)" fg:x="4872" fg:w="2"/><text x="76.2800%" y="127.50"></text></g><g><title>poker_sim`__rdl_alloc (4 samples, 0.06%)</title><rect x="76.0612%" y="117" width="0.0624%" height="15" fill="rgb(252,136,11)" fg:x="4874" fg:w="4"/><text x="76.3112%" y="127.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (127 samples, 1.98%)</title><rect x="74.3914%" y="149" width="1.9819%" height="15" fill="rgb(219,138,53)" fg:x="4767" fg:w="127"/><text x="74.6414%" y="159.50">p..</text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (33 samples, 0.51%)</title><rect x="75.8583%" y="133" width="0.5150%" height="15" fill="rgb(211,51,23)" fg:x="4861" fg:w="33"/><text x="76.1083%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (16 samples, 0.25%)</title><rect x="76.1236%" y="117" width="0.2497%" height="15" fill="rgb(247,221,28)" fg:x="4878" fg:w="16"/><text x="76.3736%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (13 samples, 0.20%)</title><rect x="76.1704%" y="101" width="0.2029%" height="15" fill="rgb(251,222,45)" fg:x="4881" fg:w="13"/><text x="76.4204%" y="111.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::remove_aces_top (6 samples, 0.09%)</title><rect x="76.3733%" y="149" width="0.0936%" height="15" fill="rgb(217,162,53)" fg:x="4894" fg:w="6"/><text x="76.6233%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_five_combo (1,482 samples, 23.13%)</title><rect x="54.2291%" y="165" width="23.1273%" height="15" fill="rgb(229,93,14)" fg:x="3475" fg:w="1482"/><text x="54.4791%" y="175.50">poker_sim`poker_sim::models::hand_mod..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (57 samples, 0.89%)</title><rect x="76.4669%" y="149" width="0.8895%" height="15" fill="rgb(209,67,49)" fg:x="4900" fg:w="57"/><text x="76.7169%" y="159.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (3 samples, 0.05%)</title><rect x="77.3096%" y="133" width="0.0468%" height="15" fill="rgb(213,87,29)" fg:x="4954" fg:w="3"/><text x="77.5596%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (3 samples, 0.05%)</title><rect x="77.3096%" y="117" width="0.0468%" height="15" fill="rgb(205,151,52)" fg:x="4954" fg:w="3"/><text x="77.5596%" y="127.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_pair (3 samples, 0.05%)</title><rect x="77.3564%" y="165" width="0.0468%" height="15" fill="rgb(253,215,39)" fg:x="4957" fg:w="3"/><text x="77.6064%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_set (2 samples, 0.03%)</title><rect x="77.4032%" y="165" width="0.0312%" height="15" fill="rgb(221,220,41)" fg:x="4960" fg:w="2"/><text x="77.6532%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_two_pair (2 samples, 0.03%)</title><rect x="77.4345%" y="165" width="0.0312%" height="15" fill="rgb(218,133,21)" fg:x="4962" fg:w="2"/><text x="77.6845%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::pairs (5 samples, 0.08%)</title><rect x="77.4657%" y="165" width="0.0780%" height="15" fill="rgb(221,193,43)" fg:x="4964" fg:w="5"/><text x="77.7157%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::main_wins (1,676 samples, 26.15%)</title><rect x="51.4201%" y="181" width="26.1548%" height="15" fill="rgb(240,128,52)" fg:x="3295" fg:w="1676"/><text x="51.6701%" y="191.50">poker_sim`poker_sim::models::game_model::G..</text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::sets (2 samples, 0.03%)</title><rect x="77.5437%" y="165" width="0.0312%" height="15" fill="rgb(253,114,12)" fg:x="4969" fg:w="2"/><text x="77.7937%" y="175.50"></text></g><g><title>libdyld.dylib`tlv_get_addr (409 samples, 6.38%)</title><rect x="83.0680%" y="165" width="6.3826%" height="15" fill="rgb(215,223,47)" fg:x="5323" fg:w="409"/><text x="83.3180%" y="175.50">libdyld...</text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (21 samples, 0.33%)</title><rect x="89.4507%" y="165" width="0.3277%" height="15" fill="rgb(248,225,23)" fg:x="5732" fg:w="21"/><text x="89.7007%" y="175.50"></text></g><g><title>poker_sim`&lt;rand_chacha::chacha::ChaCha12Core as rand_core::block::BlockRngCore&gt;::generate (5 samples, 0.08%)</title><rect x="89.7784%" y="165" width="0.0780%" height="15" fill="rgb(250,108,0)" fg:x="5753" fg:w="5"/><text x="90.0284%" y="175.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_malloc (5 samples, 0.08%)</title><rect x="90.3714%" y="149" width="0.0780%" height="15" fill="rgb(228,208,7)" fg:x="5791" fg:w="5"/><text x="90.6214%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (15 samples, 0.23%)</title><rect x="90.4494%" y="149" width="0.2341%" height="15" fill="rgb(244,45,10)" fg:x="5796" fg:w="15"/><text x="90.6994%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$malloc (1 samples, 0.02%)</title><rect x="90.6835%" y="149" width="0.0156%" height="15" fill="rgb(207,125,25)" fg:x="5811" fg:w="1"/><text x="90.9335%" y="159.50"></text></g><g><title>poker_sim`DYLD-STUB$$realloc (9 samples, 0.14%)</title><rect x="90.6991%" y="149" width="0.1404%" height="15" fill="rgb(210,195,18)" fg:x="5812" fg:w="9"/><text x="90.9491%" y="159.50"></text></g><g><title>poker_sim`__rdl_realloc (3 samples, 0.05%)</title><rect x="90.8396%" y="149" width="0.0468%" height="15" fill="rgb(249,80,12)" fg:x="5821" fg:w="3"/><text x="91.0896%" y="159.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (1 samples, 0.02%)</title><rect x="91.2453%" y="133" width="0.0156%" height="15" fill="rgb(221,65,9)" fg:x="5847" fg:w="1"/><text x="91.4953%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_memmove (4 samples, 0.06%)</title><rect x="92.6342%" y="101" width="0.0624%" height="15" fill="rgb(235,49,36)" fg:x="5936" fg:w="4"/><text x="92.8842%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (2 samples, 0.03%)</title><rect x="92.6966%" y="101" width="0.0312%" height="15" fill="rgb(225,32,20)" fg:x="5940" fg:w="2"/><text x="92.9466%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_szone_free (2 samples, 0.03%)</title><rect x="92.7278%" y="101" width="0.0312%" height="15" fill="rgb(215,141,46)" fg:x="5942" fg:w="2"/><text x="92.9778%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`free_tiny (2 samples, 0.03%)</title><rect x="92.7591%" y="101" width="0.0312%" height="15" fill="rgb(250,160,47)" fg:x="5944" fg:w="2"/><text x="93.0091%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_pointer_size (20 samples, 0.31%)</title><rect x="92.7903%" y="101" width="0.3121%" height="15" fill="rgb(216,222,40)" fg:x="5946" fg:w="20"/><text x="93.0403%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`DYLD-STUB$$_platform_bzero (3 samples, 0.05%)</title><rect x="93.1804%" y="85" width="0.0468%" height="15" fill="rgb(234,217,39)" fg:x="5971" fg:w="3"/><text x="93.4304%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_nanov2_free (44 samples, 0.69%)</title><rect x="93.2272%" y="85" width="0.6866%" height="15" fill="rgb(207,178,40)" fg:x="5974" fg:w="44"/><text x="93.4772%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc (22 samples, 0.34%)</title><rect x="93.9139%" y="85" width="0.3433%" height="15" fill="rgb(221,136,13)" fg:x="6018" fg:w="22"/><text x="94.1639%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`rack_get_thread_index (9 samples, 0.14%)</title><rect x="94.3040%" y="69" width="0.1404%" height="15" fill="rgb(249,199,10)" fg:x="6043" fg:w="9"/><text x="94.5540%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_from_free_list (1 samples, 0.02%)</title><rect x="94.4444%" y="69" width="0.0156%" height="15" fill="rgb(249,222,13)" fg:x="6052" fg:w="1"/><text x="94.6944%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`set_tiny_meta_header_in_use (8 samples, 0.12%)</title><rect x="94.6785%" y="53" width="0.1248%" height="15" fill="rgb(244,185,38)" fg:x="6067" fg:w="8"/><text x="94.9285%" y="63.50"></text></g><g><title>libsystem_malloc.dylib`_tiny_check_and_zero_inline_meta_from_freelist (7 samples, 0.11%)</title><rect x="95.0531%" y="37" width="0.1092%" height="15" fill="rgb(236,202,9)" fg:x="6091" fg:w="7"/><text x="95.3031%" y="47.50"></text></g><g><title>libsystem_malloc.dylib`szone_malloc_should_clear (62 samples, 0.97%)</title><rect x="94.2572%" y="85" width="0.9675%" height="15" fill="rgb(250,229,37)" fg:x="6040" fg:w="62"/><text x="94.5072%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_should_clear (49 samples, 0.76%)</title><rect x="94.4600%" y="69" width="0.7647%" height="15" fill="rgb(206,174,23)" fg:x="6053" fg:w="49"/><text x="94.7100%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`tiny_malloc_from_free_list (27 samples, 0.42%)</title><rect x="94.8034%" y="53" width="0.4213%" height="15" fill="rgb(211,33,43)" fg:x="6075" fg:w="27"/><text x="95.0534%" y="63.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_add_ptr (4 samples, 0.06%)</title><rect x="95.1623%" y="37" width="0.0624%" height="15" fill="rgb(245,58,50)" fg:x="6098" fg:w="4"/><text x="95.4123%" y="47.50"></text></g><g><title>libsystem_platform.dylib`__bzero (4 samples, 0.06%)</title><rect x="95.2247%" y="85" width="0.0624%" height="15" fill="rgb(244,68,36)" fg:x="6102" fg:w="4"/><text x="95.4747%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (149 samples, 2.33%)</title><rect x="93.1024%" y="101" width="2.3252%" height="15" fill="rgb(232,229,15)" fg:x="5966" fg:w="149"/><text x="93.3524%" y="111.50">l..</text></g><g><title>libsystem_platform.dylib`_platform_memset (9 samples, 0.14%)</title><rect x="95.2871%" y="85" width="0.1404%" height="15" fill="rgb(254,30,23)" fg:x="6106" fg:w="9"/><text x="95.5371%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`szone_good_size (2 samples, 0.03%)</title><rect x="95.4276%" y="101" width="0.0312%" height="15" fill="rgb(235,160,14)" fg:x="6115" fg:w="2"/><text x="95.6776%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`szone_malloc_should_clear (2 samples, 0.03%)</title><rect x="95.4588%" y="101" width="0.0312%" height="15" fill="rgb(212,155,44)" fg:x="6117" fg:w="2"/><text x="95.7088%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`_szone_free (8 samples, 0.12%)</title><rect x="95.6773%" y="85" width="0.1248%" height="15" fill="rgb(226,2,50)" fg:x="6131" fg:w="8"/><text x="95.9273%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_add_ptr (14 samples, 0.22%)</title><rect x="96.2703%" y="53" width="0.2185%" height="15" fill="rgb(234,177,6)" fg:x="6169" fg:w="14"/><text x="96.5203%" y="63.50"></text></g><g><title>libsystem_malloc.dylib`free_tiny (52 samples, 0.81%)</title><rect x="95.8021%" y="85" width="0.8115%" height="15" fill="rgb(217,24,9)" fg:x="6139" fg:w="52"/><text x="96.0521%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_no_lock (37 samples, 0.58%)</title><rect x="96.0362%" y="69" width="0.5774%" height="15" fill="rgb(220,13,46)" fg:x="6154" fg:w="37"/><text x="96.2862%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_list_remove_ptr (8 samples, 0.12%)</title><rect x="96.4888%" y="53" width="0.1248%" height="15" fill="rgb(239,221,27)" fg:x="6183" fg:w="8"/><text x="96.7388%" y="63.50"></text></g><g><title>libsystem_malloc.dylib`small_malloc_should_clear (2 samples, 0.03%)</title><rect x="96.6136%" y="85" width="0.0312%" height="15" fill="rgb(222,198,25)" fg:x="6191" fg:w="2"/><text x="96.8636%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`rack_get_thread_index (10 samples, 0.16%)</title><rect x="96.7385%" y="69" width="0.1561%" height="15" fill="rgb(211,99,13)" fg:x="6199" fg:w="10"/><text x="96.9885%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`szone_malloc_should_clear (24 samples, 0.37%)</title><rect x="96.6448%" y="85" width="0.3745%" height="15" fill="rgb(232,111,31)" fg:x="6193" fg:w="24"/><text x="96.8948%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`small_malloc_should_clear (8 samples, 0.12%)</title><rect x="96.8945%" y="69" width="0.1248%" height="15" fill="rgb(245,82,37)" fg:x="6209" fg:w="8"/><text x="97.1445%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`szone_size (13 samples, 0.20%)</title><rect x="97.0194%" y="85" width="0.2029%" height="15" fill="rgb(227,149,46)" fg:x="6217" fg:w="13"/><text x="97.2694%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`tiny_size (11 samples, 0.17%)</title><rect x="97.0506%" y="69" width="0.1717%" height="15" fill="rgb(218,36,50)" fg:x="6219" fg:w="11"/><text x="97.3006%" y="79.50"></text></g><g><title>libsystem_malloc.dylib`tiny_free_no_lock (1 samples, 0.02%)</title><rect x="97.2222%" y="85" width="0.0156%" height="15" fill="rgb(226,80,48)" fg:x="6230" fg:w="1"/><text x="97.4722%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`szone_realloc (119 samples, 1.86%)</title><rect x="95.4900%" y="101" width="1.8571%" height="15" fill="rgb(238,224,15)" fg:x="6119" fg:w="119"/><text x="95.7400%" y="111.50">l..</text></g><g><title>libsystem_platform.dylib`_platform_memset (7 samples, 0.11%)</title><rect x="97.2378%" y="85" width="0.1092%" height="15" fill="rgb(241,136,10)" fg:x="6231" fg:w="7"/><text x="97.4878%" y="95.50"></text></g><g><title>libsystem_malloc.dylib`_malloc_zone_realloc (390 samples, 6.09%)</title><rect x="91.9476%" y="117" width="6.0861%" height="15" fill="rgb(208,32,45)" fg:x="5892" fg:w="390"/><text x="92.1976%" y="127.50">libsyste..</text></g><g><title>libsystem_platform.dylib`_platform_memmove (44 samples, 0.69%)</title><rect x="97.3471%" y="101" width="0.6866%" height="15" fill="rgb(207,135,9)" fg:x="6238" fg:w="44"/><text x="97.5971%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`default_zone_realloc (2 samples, 0.03%)</title><rect x="98.0337%" y="117" width="0.0312%" height="15" fill="rgb(206,86,44)" fg:x="6282" fg:w="2"/><text x="98.2837%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_realloc (11 samples, 0.17%)</title><rect x="98.0649%" y="117" width="0.1717%" height="15" fill="rgb(245,177,15)" fg:x="6284" fg:w="11"/><text x="98.3149%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`szone_realloc (3 samples, 0.05%)</title><rect x="98.2366%" y="117" width="0.0468%" height="15" fill="rgb(206,64,50)" fg:x="6295" fg:w="3"/><text x="98.4866%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`_realloc (467 samples, 7.29%)</title><rect x="91.2609%" y="133" width="7.2878%" height="15" fill="rgb(234,36,40)" fg:x="5848" fg:w="467"/><text x="91.5109%" y="143.50">libsystem_..</text></g><g><title>libsystem_malloc.dylib`szone_size (17 samples, 0.27%)</title><rect x="98.2834%" y="117" width="0.2653%" height="15" fill="rgb(213,64,8)" fg:x="6298" fg:w="17"/><text x="98.5334%" y="127.50"></text></g><g><title>libsystem_malloc.dylib`tiny_size (10 samples, 0.16%)</title><rect x="98.3926%" y="101" width="0.1561%" height="15" fill="rgb(210,75,36)" fg:x="6305" fg:w="10"/><text x="98.6426%" y="111.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_malloc_type (8 samples, 0.12%)</title><rect x="98.5487%" y="133" width="0.1248%" height="15" fill="rgb(229,88,21)" fg:x="6315" fg:w="8"/><text x="98.7987%" y="143.50"></text></g><g><title>libsystem_malloc.dylib`nanov2_size (20 samples, 0.31%)</title><rect x="98.6735%" y="133" width="0.3121%" height="15" fill="rgb(252,204,47)" fg:x="6323" fg:w="20"/><text x="98.9235%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (587 samples, 9.16%)</title><rect x="89.8564%" y="165" width="9.1604%" height="15" fill="rgb(208,77,27)" fg:x="5758" fg:w="587"/><text x="90.1064%" y="175.50">poker_sim`all..</text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (521 samples, 8.13%)</title><rect x="90.8864%" y="149" width="8.1305%" height="15" fill="rgb(221,76,26)" fg:x="5824" fg:w="521"/><text x="91.1364%" y="159.50">poker_sim`a..</text></g><g><title>libsystem_malloc.dylib`szone_size (2 samples, 0.03%)</title><rect x="98.9856%" y="133" width="0.0312%" height="15" fill="rgb(225,139,18)" fg:x="6343" fg:w="2"/><text x="99.2356%" y="143.50"></text></g><g><title>poker_sim`alloc::raw_vec::finish_grow (1 samples, 0.02%)</title><rect x="99.0169%" y="165" width="0.0156%" height="15" fill="rgb(230,137,11)" fg:x="6345" fg:w="1"/><text x="99.2669%" y="175.50"></text></g><g><title>poker_sim`alloc::vec::Vec&lt;T,A&gt;::extend_with (2 samples, 0.03%)</title><rect x="99.0325%" y="165" width="0.0312%" height="15" fill="rgb(212,28,1)" fg:x="6346" fg:w="2"/><text x="99.2825%" y="175.50"></text></g><g><title>poker_sim`rand::rngs::reseeding::ReseedingCore&lt;R,Rsdr&gt;::reseed_and_generate (8 samples, 0.12%)</title><rect x="99.0637%" y="165" width="0.1248%" height="15" fill="rgb(248,164,17)" fg:x="6348" fg:w="8"/><text x="99.3137%" y="175.50"></text></g><g><title>libsystem_kernel.dylib`getentropy (8 samples, 0.12%)</title><rect x="99.0637%" y="149" width="0.1248%" height="15" fill="rgb(222,171,42)" fg:x="6348" fg:w="8"/><text x="99.3137%" y="159.50"></text></g><g><title>poker_sim`poker_sim::models::game_model::Game::new (1,428 samples, 22.28%)</title><rect x="77.5749%" y="181" width="22.2846%" height="15" fill="rgb(243,84,45)" fg:x="4971" fg:w="1428"/><text x="77.8249%" y="191.50">poker_sim`poker_sim::models::game_m..</text></g><g><title>poker_sim`rand::rngs::thread::rng (43 samples, 0.67%)</title><rect x="99.1885%" y="165" width="0.6710%" height="15" fill="rgb(252,49,23)" fg:x="6356" fg:w="43"/><text x="99.4385%" y="175.50"></text></g><g><title>poker_sim`poker_sim::models::hand_model::HandStrength::best_five_combo (6 samples, 0.09%)</title><rect x="99.8596%" y="181" width="0.0936%" height="15" fill="rgb(215,19,7)" fg:x="6399" fg:w="6"/><text x="100.1096%" y="191.50"></text></g><g><title>poker_sim`rand::rngs::thread::rng (1 samples, 0.02%)</title><rect x="99.9532%" y="181" width="0.0156%" height="15" fill="rgb(238,81,41)" fg:x="6405" fg:w="1"/><text x="100.2032%" y="191.50"></text></g><g><title>dyld`start (6,407 samples, 99.98%)</title><rect x="0.0000%" y="293" width="99.9844%" height="15" fill="rgb(210,199,37)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="303.50">dyld`start</text></g><g><title>poker_sim`main (6,407 samples, 99.98%)</title><rect x="0.0000%" y="277" width="99.9844%" height="15" fill="rgb(244,192,49)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="287.50">poker_sim`main</text></g><g><title>poker_sim`std::rt::lang_start_internal (6,407 samples, 99.98%)</title><rect x="0.0000%" y="261" width="99.9844%" height="15" fill="rgb(226,211,11)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="271.50">poker_sim`std::rt::lang_start_internal</text></g><g><title>poker_sim`std::rt::lang_start::_{{closure}} (6,407 samples, 99.98%)</title><rect x="0.0000%" y="245" width="99.9844%" height="15" fill="rgb(236,162,54)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="255.50">poker_sim`std::rt::lang_start::_{{closure}}</text></g><g><title>poker_sim`std::sys::backtrace::__rust_begin_short_backtrace (6,407 samples, 99.98%)</title><rect x="0.0000%" y="229" width="99.9844%" height="15" fill="rgb(220,229,9)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="239.50">poker_sim`std::sys::backtrace::__rust_begin_short_backtrace</text></g><g><title>poker_sim`poker_sim::main (6,407 samples, 99.98%)</title><rect x="0.0000%" y="213" width="99.9844%" height="15" fill="rgb(250,87,22)" fg:x="0" fg:w="6407"/><text x="0.2500%" y="223.50">poker_sim`poker_sim::main</text></g><g><title>poker_sim`poker_sim::models::monte_model::MonteModel::run_sim (6,388 samples, 99.69%)</title><rect x="0.2965%" y="197" width="99.6879%" height="15" fill="rgb(239,43,17)" fg:x="19" fg:w="6388"/><text x="0.5465%" y="207.50">poker_sim`poker_sim::models::monte_model::MonteModel::run_sim</text></g><g><title>poker_sim`std::io::stdio::_print (1 samples, 0.02%)</title><rect x="99.9688%" y="181" width="0.0156%" height="15" fill="rgb(231,177,25)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="191.50"></text></g><g><title>poker_sim`&lt;&amp;std::io::stdio::Stdout as std::io::Write&gt;::write_fmt (1 samples, 0.02%)</title><rect x="99.9688%" y="165" width="0.0156%" height="15" fill="rgb(219,179,1)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="175.50"></text></g><g><title>poker_sim`core::fmt::write (1 samples, 0.02%)</title><rect x="99.9688%" y="149" width="0.0156%" height="15" fill="rgb(238,219,53)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="159.50"></text></g><g><title>poker_sim`polars_core::fmt::_&lt;impl core::fmt::Display for polars_core::frame::DataFrame&gt;::fmt (1 samples, 0.02%)</title><rect x="99.9688%" y="133" width="0.0156%" height="15" fill="rgb(232,167,36)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="143.50"></text></g><g><title>poker_sim`std::env::_var (1 samples, 0.02%)</title><rect x="99.9688%" y="117" width="0.0156%" height="15" fill="rgb(244,19,51)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="127.50"></text></g><g><title>libsystem_platform.dylib`_platform_memmove (1 samples, 0.02%)</title><rect x="99.9688%" y="101" width="0.0156%" height="15" fill="rgb(224,6,22)" fg:x="6406" fg:w="1"/><text x="100.2188%" y="111.50"></text></g><g><title>all (6,408 samples, 100%)</title><rect x="0.0000%" y="309" width="100.0000%" height="15" fill="rgb(224,145,5)" fg:x="0" fg:w="6408"/><text x="0.2500%" y="319.50"></text></g><g><title>libsystem_kernel.dylib`__exit (1 samples, 0.02%)</title><rect x="99.9844%" y="293" width="0.0156%" height="15" fill="rgb(234,130,49)" fg:x="6407" fg:w="1"/><text x="100.2344%" y="303.50"></text></g></svg></svg>

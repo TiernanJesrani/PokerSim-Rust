@@ -4,6 +4,7 @@ use crate::models::card_model::Card;
 #[derive(Debug)]
 pub struct Deck {
     pub cards: Vec<Card>,
+    //pub cards_test: [Card; 50]
     pub deck_size: usize
 }
 
@@ -15,7 +16,7 @@ impl Deck {
                 card_list.push(Card { suit: i, rank: j});
             }
         }
-        Deck { cards: card_list, deck_size: 50}
+        Deck { cards: card_list, deck_size: 50, }
     }
 
     pub fn shuffle(&mut self) -> () {
