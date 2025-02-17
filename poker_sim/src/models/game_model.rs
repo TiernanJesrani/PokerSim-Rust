@@ -32,20 +32,34 @@ impl Game {
         HandStrength::new(Vec::new()), hand_strengths: Vec::new()}
     }
 
-    pub fn deal(&mut self) {
+    pub fn must_shuffle(&mut self) -> () {
+        if self.deck.deck_size - self.deck.deck_pos < (self.players.len() * 2) + 7 {
+            self.deck.deck_pos = 0;
+            self.deck.shuffle();
+        }
+    }
+
+    pub fn reset_game(&mut self) -> () {
+        self.must_shuffle();
+        self.players.iter_mut().for_each(|v| v.hand.clear());
+        self.board.clear();
+        self.hand_strengths.clear();
+    }
+
+    pub fn deal(&mut self) -> () {
         for i in 0..(self.players.len() * 2) {
             let player_num = i % self.players.len();
             self.players[player_num].hand.push(self.deck.top_card());
         }
     }
 
-    pub fn flop(&mut self) {
+    pub fn flop(&mut self) -> () {
         for _i in 0..3 {
             self.board.push(self.deck.top_card());
         }
     }
 
-    pub fn turn(&mut self) {
+    pub fn turn(&mut self) -> () {
         self.board.push(self.deck.top_card());
     }
 
@@ -53,17 +67,19 @@ impl Game {
         self.board.push(self.deck.top_card());
     }
 
-    // This section deals with checking for the strength of the hands.
-
     pub fn form_seven_cards(&self, hand: usize) -> HandStrength {
-        let hand_vec = if hand >= self.players.len() {
-            self.main_hand.to_vec()
+        let hand_slice = if hand >= self.players.len() {
+            &self.main_hand
         } else {
-            self.players[hand].hand.to_vec()
+            &self.players[hand].hand
         };
-        let mut board_and_hand = [self.board.to_vec(), hand_vec].concat();
+    
+        let mut board_and_hand = Vec::with_capacity(self.board.len() + hand_slice.len());
+        board_and_hand.extend_from_slice(&self.board);
+        board_and_hand.extend_from_slice(hand_slice);
+        
         board_and_hand.sort_by_key(|x| x.rank);
-
+    
         HandStrength::new(board_and_hand)
     }
 
@@ -73,7 +89,6 @@ impl Game {
 
         for i in 0..self.players.len() {
             self.hand_strengths.push(self.form_seven_cards(i));
-            //self.hand_strengths[i].best_five_combo();
         }
     }
 

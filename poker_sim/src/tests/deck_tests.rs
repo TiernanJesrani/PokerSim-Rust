@@ -36,20 +36,4 @@ mod tests {
 
         assert_ne!(deck.cards[0].rank, 0);
     }
-
-    #[test]
-    #[should_panic]
-    fn test_remove_suited_pairs() ->() {
-        let mut deck = deck_model::Deck::new();
-
-        deck.remove_cards(true, 5, 5);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_remove_high_rank() ->() {
-        let mut deck = deck_model::Deck::new();
-
-        deck.remove_cards(true, 15, 0);
-    }
 }

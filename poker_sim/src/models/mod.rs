@@ -4,3 +4,4 @@ pub mod game_model;
 pub mod player_model;
 pub mod hand_model;
 pub mod monte_model;
+pub mod cli_model;
