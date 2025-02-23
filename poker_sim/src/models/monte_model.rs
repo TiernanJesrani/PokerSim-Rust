@@ -1,8 +1,8 @@
 use crate::models::game_model::Game;
+use crate::models::card_model::Card;
 use polars::df;
 use std::fs::File;
 use std::io::Write;
-use csv;
 use polars::prelude::*;
 
 pub struct MonteModel {
@@ -28,23 +28,35 @@ impl MonteModel {
         MonteModel { estimates: estimates, conversion_string: ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"], player_vecs: player_vecs}
     }
 
-    pub fn run_one_hand(&mut self, suited: bool, rank_1: usize, rank_2: usize, num_players: usize) -> f64 {
+    pub fn run_one_hand(&mut self, card_1: Card, card_2: Card, num_players: usize, additional_cards: Option<Vec<Card>>) -> f64 {
         let mut sum = 0;
-        let mut game = Game::new(num_players - 1, suited, rank_1, rank_2);
+        let mut game = Game::new(num_players - 1, card_1, card_2, additional_cards);
+        let mut cli = true;
         for _i in 0..self.estimates {
             game.deal();
 
-            game.flop();
-
-            game.turn();
-
-            game.river();
+            if game.board.is_empty() {
+                cli = false;
+                game.flop();
+                game.turn();
+                game.river();
+            }
+            else if game.board.len() < 4 {
+                game.turn();
+                game.river();
+            }
+            else if game.board.len() < 5 {
+                game.river();
+            }
 
             game.form_hand_strengths();
 
             sum += game.main_wins();
 
             game.reset_game();
+        }
+        if cli {
+            println!("{:?}", sum as f64 / (self.estimates / 100) as f64);
         }
 
         sum as f64 / (self.estimates / 100) as f64
@@ -58,7 +70,7 @@ impl MonteModel {
                 let hand_name_o = self.conversion_string[i].to_owned() + self.conversion_string[j] + "o";
                 starting_hand.push(hand_name_o);
                 for k in 2..10 {
-                    let hand_result = (self.run_one_hand(false, i, j, k) * 100.0).round() / 100.0;
+                    let hand_result = (self.run_one_hand(Card::new(0, i), Card::new(1, j), k, None) * 100.0).round() / 100.0;
                     self.player_vecs[k - 2].push(hand_result);
                 }
                 
@@ -66,11 +78,10 @@ impl MonteModel {
                     let hand_name_s = self.conversion_string[i].to_owned() + self.conversion_string[j] + "s";
                     starting_hand.push(hand_name_s);
                     for k in 2..10 {
-                        let hand_result = self.run_one_hand(true, i, j, k);
+                        let hand_result = self.run_one_hand(Card::new(0, i), Card::new(0, j), k, None);
                         self.player_vecs[k - 2].push((hand_result * 100.0).round() / 100.0);
                     }
                 }
-                println!("Iterations {:?} done.", i*j);
             }
         }
 
@@ -102,7 +113,7 @@ impl MonteModel {
 
         let df_str = format!("{:?}", df);
 
-        let mut data_file = File::create("250_estimates.txt").expect("creation failed");
+        let mut data_file = File::create("testing_estimates.txt").expect("creation failed");
 
         data_file.write(df_str.as_bytes()).expect("write failed");
     }

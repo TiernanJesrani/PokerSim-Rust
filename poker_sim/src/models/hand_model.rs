@@ -279,7 +279,6 @@ impl HandStrength {
     }
 
     pub fn best_five_combo(&mut self) -> () {
-
         let straight = self.best_straight();
         if straight.0 != 0 && straight.1 == true {
             self.hand_type[8] = 1;
@@ -339,7 +338,6 @@ impl HandStrength {
 
             self.add_aces_top();
             let mut i = self.seven_cards.len() - 1;
-
             for _j in 0..2 {
                 while i > 0 && self.seven_cards[i].rank == set {
                     i -= 1;
@@ -380,14 +378,12 @@ impl HandStrength {
 
             self.add_aces_top();
             let mut i = self.seven_cards.len() - 1;
-
             for _j in 0..3 {
                 while i > 0 && self.seven_cards[i].rank == pair {
                     i -= 1;
                 }
 
                 self.cards_leftover[self.seven_cards[i].rank] = 1;
-
                 i -= 1;
             }
 

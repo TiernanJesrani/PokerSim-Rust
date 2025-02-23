@@ -10,26 +10,31 @@ pub struct Game {
     pub board: Vec<Card>,
     pub main_hand: Vec<Card>,
     pub hand_strengths: Vec<HandStrength>,
-    pub main_hand_strength: HandStrength
+    pub main_hand_strength: HandStrength,
+    pub cli_board: Vec<Card>,
 }
 
 impl Game {
-    pub fn new(num_players_minus_one: usize, suited: bool, rank_1: usize, rank_2: usize) -> Game {
+    pub fn new(num_players_minus_one: usize, card_1: Card, card_2: Card, additional_cards: Option<Vec<Card>>) -> Game {
         let mut deck = Deck::new();
 
-        let main_hand = if suited {
-            vec![deck.cards[rank_1], deck.cards[rank_2]]
-        } else {
-            vec![deck.cards[rank_1], deck.cards[rank_2 + 13]]
-        };
-    
-        deck.remove_cards(suited, rank_1, rank_2);
+        let main_hand = vec![card_1, card_2];
+
+        let mut board = additional_cards.unwrap_or_else(Vec::new);
+
+        board.push(card_1);
+        board.push(card_2);
+        
+        deck.remove_cards(board.clone());
+
+        board.pop();
+        board.pop();
 
         deck.shuffle();
-        
+
         Game { players: vec![Player { hand: Vec::new() }; num_players_minus_one], 
-        deck: deck, board: Vec::new(), main_hand: main_hand, main_hand_strength: 
-        HandStrength::new(Vec::new()), hand_strengths: Vec::new()}
+        deck: deck, board: board.clone(), main_hand: main_hand, main_hand_strength: 
+        HandStrength::new(Vec::new()), hand_strengths: Vec::new(), cli_board: board.clone()}
     }
 
     pub fn must_shuffle(&mut self) -> () {
@@ -42,7 +47,7 @@ impl Game {
     pub fn reset_game(&mut self) -> () {
         self.must_shuffle();
         self.players.iter_mut().for_each(|v| v.hand.clear());
-        self.board.clear();
+        self.board = self.cli_board.clone();
         self.hand_strengths.clear();
     }
 

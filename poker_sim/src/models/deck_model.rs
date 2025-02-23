@@ -4,7 +4,6 @@ use crate::models::card_model::Card;
 #[derive(Debug)]
 pub struct Deck {
     pub cards: Vec<Card>,
-    //pub cards_test: [Card; 50]
     pub deck_size: usize,
     pub deck_pos: usize,
 }
@@ -32,14 +31,16 @@ impl Deck {
         self.cards[self.deck_pos - 1]
     }
 
-    pub fn remove_cards(&mut self, suited: bool, rank_1: usize, rank_2: usize) -> () {
-        if suited == true {
-            self.cards.remove(std::cmp::max(rank_1, rank_2));
-            self.cards.remove(std::cmp::min(rank_1, rank_2));
+    pub fn remove_cards(&mut self, mut cards: Vec<Card>) -> () {
+        cards.sort_by(|a, b| {
+            b.suit.cmp(&a.suit)
+                .then_with(|| b.rank.cmp(&a.rank))
+        });
+        for card in &cards {
+            if let Some(pos) = self.cards.iter().position(|c| c == card) {
+                self.cards.remove(pos); 
+            }
         }
-        else {
-            self.cards.remove(rank_2 + 13);
-            self.cards.remove(rank_1);
-        }
+        self.deck_size -= cards.len();
     }
 }

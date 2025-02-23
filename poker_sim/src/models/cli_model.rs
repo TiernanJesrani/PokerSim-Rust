@@ -9,7 +9,7 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn new(card_1: &str, card_2: &str, num_players: &str) -> Cli {
+    pub fn new(card_1: &str, card_2: &str, num_players: &str, additional_cards: Vec<Option<String>>) -> Cli {
         let suit_1 = card_1.chars().nth(0).expect("empty arg").to_string().parse::<usize>().unwrap();
         let rank_1 = card_1.chars().skip(2).take(2).collect::<String>().parse().unwrap();
         
@@ -41,16 +41,31 @@ impl Cli {
             panic!();
         }
 
-        let mut game = Game::new(num_p, suited, rank_1, rank_2);
+        let monte = MonteModel::new(250_000);
 
-        let mut v = Vec::new();
+        let mut hand = Vec::new();
 
-        v.push(Card::new(suit_1, rank_1));
-        v.push(Card::new(suit_2, rank_2));
+        hand.push(Card::new(suit_1, rank_1));
+        hand.push(Card::new(suit_2, rank_2));
 
-        println!("card 1: {:?}, card 2: {:?}", suit_1, rank_1);
-        println!("card 1: {:?}, card 2: {:?}", suit_2, rank_2);
+        //let mut board_strings = additional_cards.unwrap_or_else(Vec::new);
 
-        Cli { hand: v.clone(), board: v.clone(), num_players: 1}
+        let mut board_strings = Vec::new();
+
+        for i in 0..additional_cards.len() {
+            if additional_cards[i].is_some() {
+                board_strings.push(additional_cards[i].clone().unwrap());
+            }
+        }
+
+        let mut board = Vec::new();
+
+        for i in 0..board_strings.len() {
+            let suit = board_strings[i].chars().nth(0).expect("empty arg").to_string().parse::<usize>().unwrap();
+            let rank = board_strings[i].chars().skip(2).take(2).collect::<String>().parse().unwrap();
+            board.push(Card::new(suit, rank))
+        }
+
+        Cli { hand: hand.clone(), board: board.clone(), num_players: num_p}
     }
 }
